@@ -75,7 +75,7 @@
             "delimiter": ",",
             "query": "let AppInventory = AppInventory_CL;\r\nAppInventory\r\n| where AppName_s <> \"\"\r\n| distinct AppName_s\r\n| sort by AppName_s asc",
             "value": [
-              "1Password"
+              "*"
             ],
             "typeSettings": {
               "additionalResourceOptions": [
@@ -335,10 +335,12 @@
             "name": "Device",
             "type": 2,
             "isRequired": true,
-            "query": "DeviceInventory_CL\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\r\n| project ComputerName_s\r\n",
-            "value": "CLOUDWAY-JKS-WS",
+            "query": "let AppDevices = AppInventory_CL\n| where isnotempty(ComputerName_s)\n| distinct ComputerName_s;\nlet DeviceInventoryDevices = union isfuzzy=true DeviceInventory_CL, datatable(TimeGenerated:datetime, ManagedDeviceID_g:string, ComputerName_s:string)[]\n| where isnotempty(ComputerName_s)\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\n| project ComputerName_s;\nunion AppDevices, DeviceInventoryDevices\n| distinct ComputerName_s\n| sort by ComputerName_s asc\n",
+            "value": "*",
             "typeSettings": {
-              "additionalResourceOptions": [],
+              "additionalResourceOptions": [
+                "value::all"
+              ],
               "showDefault": false
             },
             "timeContext": {
@@ -362,7 +364,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let DeviceInventory = DeviceInventory_CL;\r\nlet AppInventory = AppInventory_CL;\r\nAppInventory \r\n| join kind = inner DeviceInventory on ManagedDeviceID_g\r\n| where ComputerName_s == \"{Device}\"\r\n| summarize arg_max(TimeGenerated, *) by AppName_s\r\n| summarize AppCount = count (AppName_s)\r\n| extend TitleText = \"Application Installed\"\r\n",
+        "query": "let SelectedDevice = \"{Device}\";\nlet DeviceInventory = union isfuzzy=true DeviceInventory_CL, datatable(TimeGenerated:datetime, ManagedDeviceID_g:string, ComputerName_s:string)[]\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\n| project ManagedDeviceID_g, DeviceInventoryComputerName = ComputerName_s;\nlet AppInventory = AppInventory_CL;\nAppInventory\n| join kind=leftouter DeviceInventory on ManagedDeviceID_g\n| extend DisplayComputerName = coalesce(ComputerName_s, DeviceInventoryComputerName)\n| where SelectedDevice == \"*\" or DisplayComputerName == SelectedDevice\n| summarize arg_max(TimeGenerated, *) by AppName_s\n| summarize AppCount = count(AppName_s)\n| extend TitleText = \"Application Installed\"\n",
         "size": 3,
         "timeContext": {
           "durationMs": 1209600000
@@ -402,7 +404,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let DeviceInventory = DeviceInventory_CL;\r\nlet AppInventory = AppInventory_CL;\r\nAppInventory \r\n| join kind = inner DeviceInventory on ManagedDeviceID_g\r\n| where ComputerName_s == \"{Device}\"\r\n| summarize arg_max(TimeGenerated, *) by AppName_s\r\n| project ComputerName_s, AppName_s,  AppPublisher_s, AppVersion_s, AppUninstallString_s\r\n| sort by AppName_s asc \r\n",
+        "query": "let SelectedDevice = \"{Device}\";\nlet DeviceInventory = union isfuzzy=true DeviceInventory_CL, datatable(TimeGenerated:datetime, ManagedDeviceID_g:string, ComputerName_s:string)[]\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\n| project ManagedDeviceID_g, DeviceInventoryComputerName = ComputerName_s;\nlet AppInventory = AppInventory_CL;\nAppInventory\n| join kind=leftouter DeviceInventory on ManagedDeviceID_g\n| extend DisplayComputerName = coalesce(ComputerName_s, DeviceInventoryComputerName)\n| where SelectedDevice == \"*\" or DisplayComputerName == SelectedDevice\n| summarize arg_max(TimeGenerated, *) by AppName_s\n| project ComputerName_s = DisplayComputerName, AppName_s, AppPublisher_s, AppVersion_s, AppUninstallString_s\n| sort by AppName_s asc\n",
         "size": 0,
         "timeContext": {
           "durationMs": 1209600000
@@ -617,9 +619,6 @@
       },
       "name": "Billing"
     }
-  ],
-  "fallbackResourceIds": [
-    "/subscriptions/43bc4ec1-469e-4862-a552-a90661b38e8e/resourceGroups/RG_CloudWayMonitoring/providers/Microsoft.OperationalInsights/workspaces/log-cloudwaymonitoring"
   ],
   "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
 }
