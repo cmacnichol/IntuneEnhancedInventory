@@ -47,6 +47,7 @@ $AzureFunctionURL = ""
 $CollectAppInventory = $true
 $CollectDeviceInventory = $true
 # $CollectCustomInventory = $true *SAMPLE*
+$DryRun = $false
 
 #Set Log Analytics Log Name
 $AppLogName = "AppInventory"
@@ -563,6 +564,42 @@ $MainPayLoad = [PSCustomObject]@{
 $MainPayLoadJson = $MainPayLoad| ConvertTo-Json -Depth 9	
 
 #endregion compose
+
+#region dryrun
+if ($DryRun -eq $true) {
+	$GeneratedAt = Get-Date
+
+	foreach ($LogPayloadProperty in $MainPayLoad.LogPayloads.PSObject.Properties) {
+		$Payload = $LogPayloadProperty.Value
+		$RecordCount = 0
+
+		if ($null -ne $Payload) {
+			if ($Payload -is [string] -and [string]::IsNullOrEmpty($Payload)) {
+				$RecordCount = 0
+			}
+			elseif ($Payload -is [array]) {
+				$RecordCount = $Payload.Count
+			}
+			else {
+				$RecordCount = 1
+			}
+		}
+
+		Write-Output ([PSCustomObject]@{
+			DryRun = $true
+			LogName = $LogPayloadProperty.Name
+			AzureADTenantID = $MainPayLoad.AzureADTenantID
+			AzureADDeviceID = $MainPayLoad.AzureADDeviceID
+			RecordCount = $RecordCount
+			Payload = $Payload
+			PayloadJson = ConvertTo-Json -InputObject $Payload -Depth 20
+			GeneratedAt = $GeneratedAt
+		})
+	}
+
+	Exit 0
+}
+#endregion dryrun
 
 #region ingestion 
 # NO NEED TO EDIT BELOW THIS LINE 
