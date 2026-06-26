@@ -2,7 +2,7 @@
 Repository for the Intune Custom Inventory solution by MSEndpointmgr.com
 
 > IMPORTANT! 
-> Version 1.2 requires use of version 3.5.0 of the Invoke-CustomInventoryAzureFunction.ps1 to be used in Proactive Remediations
+> Version 1.2 requires use of version 3.6.0 of the Invoke-CustomInventoryAzureFunction.ps1 to be used in Proactive Remediations
 > This version of the Azure Function will work for any custom log you want to send securely to Log Analytics
 
 ## Lenovo Dock Inventory
@@ -28,7 +28,7 @@ Full changelog can be found here: [Changelog](https://github.com/MSEndpointMgr/I
 * 1.2 - Released 15.10.2022 
 
 #### Latest Version history for the Proactive Remediation Script
-* 3.5 - Released 15.10.2022
+* 3.6.0 - Added Lenovo Dock inventory collection
 
 # Update ONLY
 * To perform an update use this deploy button and enter information from your current deployment-

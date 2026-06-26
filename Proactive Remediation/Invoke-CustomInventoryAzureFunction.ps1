@@ -20,7 +20,7 @@ Author:      Jan Ketil Skanke
 Contributor: Sandy Zeng / Maurice Daly
 Contact:     @JankeSkanke
 Created:     2021-01-02
-Updated:     2022-15-10 by @JankeSkanke
+Updated:     2026-06-26
 
 Version history:
 0.9.0 - (2021 - 01 - 02) Script created
@@ -33,6 +33,7 @@ Version history:
 3.0.0 - (2022-22-02) Azure Function updated - Requires version 1.1 of Azure Function LogCollectorAPI for more dynamic log collecting
 3.0.1 - (2022-15-09) Updated to support CloudPC (Different method to find AzureAD DeviceID for verification) and fixed output error from script (Thanks to @gwblok)
 3.5.0 - (2022-14-10) Azure Function updated - Requires version 1.2 Updated output logic to be more dynamic. Fixed a bug in the randomizer function and disabled inventory collection during provisioning day.
+3.6.0 - (2026-06-26) Added Lenovo Dock inventory collection with local cache, status, and usage logs.
 #>
 
 #region initialize
@@ -947,7 +948,7 @@ if ($DryRun -eq $true) {
 
 #region ingestion 
 # NO NEED TO EDIT BELOW THIS LINE 
-# New in version 3.5.0 - Now it requires functionapp version 1.2 
+# New in version 3.6.0 - Requires functionapp version 1.2 
 # Set default exit code to 0 
 $ExitCode = 0
 
