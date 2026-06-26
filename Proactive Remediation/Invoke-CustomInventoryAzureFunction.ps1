@@ -46,13 +46,18 @@ $AzureFunctionURL = ""
 #Control if you want to collect App or Device Inventory or both (True = Collect)
 $CollectAppInventory = $true
 $CollectDeviceInventory = $true
+$CollectLenovoDockInventory = $true
 # $CollectCustomInventory = $true *SAMPLE*
 
 #Set Log Analytics Log Name
 $AppLogName = "AppInventory"
 $DeviceLogName = "DeviceInventory"
+$LenovoDockInventoryLogName = "LenovoDockInventory"
+$LenovoDockStatusLogName = "LenovoDockStatus"
+$LenovoDockUsageLogName = "LenovoDockUsage"
 # $CustomLogName = "CustomInventory" *SAMPLE*
 $Date=(Get-Date)
+$LenovoDockCachePath = "C:\ProgramData\IntuneEnhancedInventory\LenovoDockInventory.json"
 # Enable or disable randomized running time to avoid azure function to be overloaded in larger environments 
 # Set to true only if needed 
 $RandomiseCollectionInt = $false 
@@ -178,6 +183,241 @@ function Get-InstalledApplications() {
 	$Apps = Get-ItemProperty $regpath -Name $propertyNames -ErrorAction SilentlyContinue | . { process { if ($_.DisplayName) { $_ } } } | Select-Object DisplayName, DisplayVersion, Publisher, UninstallString, PSPath | Sort-Object DisplayName
 	Remove-PSDrive -Name "HKU" | Out-Null
 	Return $Apps
+}
+function Get-LenovoDockDevice {
+	$Result = [PSCustomObject]@{
+		Docks = @()
+		CollectionStatus = "Success"
+		CollectionMessage = ""
+	}
+
+	try {
+		$Docks = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -Query "SELECT * FROM DockDevice" -ErrorAction Stop)
+		$Result.Docks = $Docks
+		if ($Docks.Count -eq 0) {
+			$Result.CollectionStatus = "NoDockConnected"
+			$Result.CollectionMessage = "No Lenovo dock returned by DockDevice."
+		}
+	}
+	catch {
+		$Result.CollectionStatus = "Error"
+		$Result.CollectionMessage = ($_.Exception.Message -replace "[\r\n]+", " ").Trim()
+	}
+
+	return $Result
+}
+function New-LenovoDockCache {
+	param (
+		[string]$AzureADDeviceID,
+		[string]$ComputerName,
+		[string]$ManagedDeviceName,
+		[string]$ManagedDeviceID
+	)
+
+	return [PSCustomObject]@{
+		AzureADDeviceID = "$AzureADDeviceID"
+		ComputerName = "$ComputerName"
+		ManagedDeviceName = "$ManagedDeviceName"
+		ManagedDeviceID = "$ManagedDeviceID"
+		LastUpdated = $null
+		KnownDocks = @()
+	}
+}
+function Get-LenovoDockCache {
+	param (
+		[string]$Path,
+		[string]$AzureADDeviceID,
+		[string]$ComputerName,
+		[string]$ManagedDeviceName,
+		[string]$ManagedDeviceID
+	)
+
+	if (Test-Path -LiteralPath $Path) {
+		try {
+			$Cache = Get-Content -LiteralPath $Path -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+			if ($null -eq $Cache.KnownDocks) {
+				$Cache | Add-Member -MemberType NoteProperty -Name "KnownDocks" -Value @() -Force
+			}
+			$Cache.KnownDocks = @($Cache.KnownDocks)
+		}
+		catch {
+			$Cache = New-LenovoDockCache -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+		}
+	}
+	else {
+		$Cache = New-LenovoDockCache -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+	}
+
+	$Cache.AzureADDeviceID = "$AzureADDeviceID"
+	$Cache.ComputerName = "$ComputerName"
+	$Cache.ManagedDeviceName = "$ManagedDeviceName"
+	$Cache.ManagedDeviceID = "$ManagedDeviceID"
+	return $Cache
+}
+function Save-LenovoDockCache {
+	param (
+		[string]$Path,
+		[object]$Cache
+	)
+
+	$CacheDirectory = Split-Path -Path $Path -Parent
+	if (-not (Test-Path -LiteralPath $CacheDirectory)) {
+		New-Item -Path $CacheDirectory -ItemType Directory -Force | Out-Null
+	}
+	$Cache | ConvertTo-Json -Depth 9 | Set-Content -LiteralPath $Path -Encoding UTF8 -Force
+}
+function Get-LenovoPrimaryDock {
+	param (
+		[array]$KnownDocks
+	)
+
+	return @($KnownDocks) | Sort-Object @{Expression = {[int]$_.SeenCount}; Descending = $true}, @{Expression = {[datetime]$_.LastSeen}; Descending = $true} | Select-Object -First 1
+}
+function Find-LenovoCachedDock {
+	param (
+		[array]$KnownDocks,
+		[object]$Dock
+	)
+
+	$DockId = "$($Dock.DockId)"
+	$SerialNumber = "$($Dock.SerialNumber)"
+	$MACAddress = "$($Dock.MACAddress)"
+
+	if (-not [string]::IsNullOrWhiteSpace($DockId)) {
+		$Match = @($KnownDocks) | Where-Object { $_.DockId -eq $DockId } | Select-Object -First 1
+		if ($null -ne $Match) { return $Match }
+	}
+	if (-not [string]::IsNullOrWhiteSpace($SerialNumber)) {
+		$Match = @($KnownDocks) | Where-Object { $_.SerialNumber -eq $SerialNumber } | Select-Object -First 1
+		if ($null -ne $Match) { return $Match }
+	}
+	if (-not [string]::IsNullOrWhiteSpace($MACAddress)) {
+		$Match = @($KnownDocks) | Where-Object { $_.MACAddress -eq $MACAddress } | Select-Object -First 1
+		if ($null -ne $Match) { return $Match }
+	}
+
+	return $null
+}
+function Update-LenovoDockCache {
+	param (
+		[object]$Cache,
+		[array]$ConnectedDocks,
+		[string]$AzureADDeviceID,
+		[string]$ComputerName,
+		[string]$ManagedDeviceName,
+		[string]$ManagedDeviceID
+	)
+
+	$Now = (Get-Date).ToUniversalTime().ToString("o")
+	$UsageEvents = @()
+	$KnownDocks = @($Cache.KnownDocks)
+	$PreviousPrimaryDock = Get-LenovoPrimaryDock -KnownDocks $KnownDocks
+	$PreviousPrimaryDockId = $PreviousPrimaryDock.DockId
+
+	foreach ($Dock in @($ConnectedDocks)) {
+		$CachedDock = Find-LenovoCachedDock -KnownDocks $KnownDocks -Dock $Dock
+		$IsNewDock = $false
+
+		if ($null -eq $CachedDock) {
+			$IsNewDock = $true
+			$CachedDock = [PSCustomObject]@{
+				DockId = "$($Dock.DockId)"
+				SerialNumber = "$($Dock.SerialNumber)"
+				MACAddress = "$($Dock.MACAddress)"
+				MachineType = "$($Dock.MachineType)"
+				FWVersion = "$($Dock.FWVersion)"
+				AvailableFWVersion = "$($Dock.AvailableFWVersion)"
+				ProcessId = "$($Dock.ProcessId)"
+				FirstSeen = $Now
+				LastSeen = $Now
+				SeenCount = 0
+				IsPrimaryDock = $false
+			}
+			$KnownDocks += $CachedDock
+		}
+
+		$CachedDock.DockId = "$($Dock.DockId)"
+		$CachedDock.SerialNumber = "$($Dock.SerialNumber)"
+		$CachedDock.MACAddress = "$($Dock.MACAddress)"
+		$CachedDock.MachineType = "$($Dock.MachineType)"
+		$CachedDock.FWVersion = "$($Dock.FWVersion)"
+		$CachedDock.AvailableFWVersion = "$($Dock.AvailableFWVersion)"
+		$CachedDock.ProcessId = "$($Dock.ProcessId)"
+		$CachedDock.LastSeen = $Now
+		$CachedDock.SeenCount = [int]$CachedDock.SeenCount + 1
+
+		if ($IsNewDock) {
+			$UsageEvents += [PSCustomObject]@{
+				AzureADDeviceID = "$AzureADDeviceID"
+				ComputerName = "$ComputerName"
+				ManagedDeviceName = "$ManagedDeviceName"
+				ManagedDeviceID = "$ManagedDeviceID"
+				DockId = "$($CachedDock.DockId)"
+				SerialNumber = "$($CachedDock.SerialNumber)"
+				MACAddress = "$($CachedDock.MACAddress)"
+				EventType = "NewDockSeen"
+				PreviousPrimaryDockId = "$PreviousPrimaryDockId"
+				IsPrimaryDock = $false
+				FirstSeen = "$($CachedDock.FirstSeen)"
+				LastSeen = "$($CachedDock.LastSeen)"
+				SeenCount = [int]$CachedDock.SeenCount
+				InventoryDate = $Now
+			}
+		}
+
+		if ((-not [string]::IsNullOrWhiteSpace($PreviousPrimaryDockId)) -and ($CachedDock.DockId -ne $PreviousPrimaryDockId)) {
+			$UsageEvents += [PSCustomObject]@{
+				AzureADDeviceID = "$AzureADDeviceID"
+				ComputerName = "$ComputerName"
+				ManagedDeviceName = "$ManagedDeviceName"
+				ManagedDeviceID = "$ManagedDeviceID"
+				DockId = "$($CachedDock.DockId)"
+				SerialNumber = "$($CachedDock.SerialNumber)"
+				MACAddress = "$($CachedDock.MACAddress)"
+				EventType = "DifferentDockSeen"
+				PreviousPrimaryDockId = "$PreviousPrimaryDockId"
+				IsPrimaryDock = $false
+				FirstSeen = "$($CachedDock.FirstSeen)"
+				LastSeen = "$($CachedDock.LastSeen)"
+				SeenCount = [int]$CachedDock.SeenCount
+				InventoryDate = $Now
+			}
+		}
+	}
+
+	$NewPrimaryDock = Get-LenovoPrimaryDock -KnownDocks $KnownDocks
+	foreach ($KnownDock in @($KnownDocks)) {
+		$KnownDock.IsPrimaryDock = ($KnownDock.DockId -eq $NewPrimaryDock.DockId)
+	}
+
+	if (($null -ne $NewPrimaryDock) -and ($NewPrimaryDock.DockId -ne $PreviousPrimaryDockId)) {
+		$UsageEvents += [PSCustomObject]@{
+			AzureADDeviceID = "$AzureADDeviceID"
+			ComputerName = "$ComputerName"
+			ManagedDeviceName = "$ManagedDeviceName"
+			ManagedDeviceID = "$ManagedDeviceID"
+			DockId = "$($NewPrimaryDock.DockId)"
+			SerialNumber = "$($NewPrimaryDock.SerialNumber)"
+			MACAddress = "$($NewPrimaryDock.MACAddress)"
+			EventType = "PrimaryDockChanged"
+			PreviousPrimaryDockId = "$PreviousPrimaryDockId"
+			IsPrimaryDock = $true
+			FirstSeen = "$($NewPrimaryDock.FirstSeen)"
+			LastSeen = "$($NewPrimaryDock.LastSeen)"
+			SeenCount = [int]$NewPrimaryDock.SeenCount
+			InventoryDate = $Now
+		}
+	}
+
+	$Cache.KnownDocks = @($KnownDocks)
+	$Cache.LastUpdated = $Now
+
+	return [PSCustomObject]@{
+		Cache = $Cache
+		UsageEvents = @($UsageEvents)
+		PrimaryDock = $NewPrimaryDock
+		InventoryDate = $Now
+	}
 }
 #endregion functions
 
@@ -523,6 +763,99 @@ if ($CollectAppInventory) {
 }
 #endregion APPINVENTORY
 
+#region LENOVODOCKINVENTORY
+if ($CollectLenovoDockInventory) {
+	$LenovoDockInventory = @()
+	$LenovoDockUsageInventory = @()
+	$LenovoDockStatusInventory = $null
+	$LenovoDockQueryResult = Get-LenovoDockDevice
+	$LenovoDockCache = Get-LenovoDockCache -Path $LenovoDockCachePath -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+	$LenovoDockInventoryDate = (Get-Date).ToUniversalTime().ToString("o")
+	$ConnectedLenovoDocks = @($LenovoDockQueryResult.Docks)
+
+	if ($LenovoDockQueryResult.CollectionStatus -eq "Success") {
+		$LenovoDockCacheUpdate = Update-LenovoDockCache -Cache $LenovoDockCache -ConnectedDocks $ConnectedLenovoDocks -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+		$LenovoDockCache = $LenovoDockCacheUpdate.Cache
+		$LenovoDockUsageInventory = @($LenovoDockCacheUpdate.UsageEvents)
+		$LenovoDockInventoryDate = $LenovoDockCacheUpdate.InventoryDate
+
+		try {
+			Save-LenovoDockCache -Path $LenovoDockCachePath -Cache $LenovoDockCache
+		}
+		catch {
+			$LenovoDockQueryResult.CollectionStatus = "Warning"
+			$LenovoDockQueryResult.CollectionMessage = "Dock data collected, but cache could not be saved: $((($_.Exception.Message) -replace "[\r\n]+", " ").Trim())"
+		}
+
+		foreach ($LenovoDock in $ConnectedLenovoDocks) {
+			$CachedLenovoDock = Find-LenovoCachedDock -KnownDocks @($LenovoDockCache.KnownDocks) -Dock $LenovoDock
+			$LenovoDockInventory += [PSCustomObject]@{
+				AzureADDeviceID = "$AzureADDeviceID"
+				ComputerName = "$ComputerName"
+				ManagedDeviceName = "$ManagedDeviceName"
+				ManagedDeviceID = "$ManagedDeviceID"
+				DockId = "$($LenovoDock.DockId)"
+				SerialNumber = "$($LenovoDock.SerialNumber)"
+				MACAddress = "$($LenovoDock.MACAddress)"
+				MachineType = "$($LenovoDock.MachineType)"
+				FWVersion = "$($LenovoDock.FWVersion)"
+				AvailableFWVersion = "$($LenovoDock.AvailableFWVersion)"
+				ProcessId = "$($LenovoDock.ProcessId)"
+				DockConnected = $true
+				IsPrimaryDock = [bool]$CachedLenovoDock.IsPrimaryDock
+				FirstSeen = "$($CachedLenovoDock.FirstSeen)"
+				LastSeen = "$($CachedLenovoDock.LastSeen)"
+				SeenCount = [int]$CachedLenovoDock.SeenCount
+				InventoryDate = $LenovoDockInventoryDate
+			}
+		}
+	}
+	elseif ($LenovoDockQueryResult.CollectionStatus -eq "Error") {
+		$LenovoDockUsageInventory += [PSCustomObject]@{
+			AzureADDeviceID = "$AzureADDeviceID"
+			ComputerName = "$ComputerName"
+			ManagedDeviceName = "$ManagedDeviceName"
+			ManagedDeviceID = "$ManagedDeviceID"
+			DockId = ""
+			SerialNumber = ""
+			MACAddress = ""
+			EventType = "CollectionError"
+			PreviousPrimaryDockId = ""
+			IsPrimaryDock = $false
+			FirstSeen = ""
+			LastSeen = ""
+			SeenCount = 0
+			InventoryDate = $LenovoDockInventoryDate
+		}
+	}
+
+	$KnownLenovoDocks = @($LenovoDockCache.KnownDocks)
+	$PrimaryLenovoDock = Get-LenovoPrimaryDock -KnownDocks $KnownLenovoDocks
+	$LastKnownLenovoDock = $KnownLenovoDocks | Sort-Object @{Expression = {[datetime]$_.LastSeen}; Descending = $true} | Select-Object -First 1
+	$ConnectedLenovoDockIds = @($ConnectedLenovoDocks | ForEach-Object { "$($_.DockId)" } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+	$ConnectedLenovoDockSerialNumbers = @($ConnectedLenovoDocks | ForEach-Object { "$($_.SerialNumber)" } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+	$LenovoDockStatusInventory = [PSCustomObject]@{
+		AzureADDeviceID = "$AzureADDeviceID"
+		ComputerName = "$ComputerName"
+		ManagedDeviceName = "$ManagedDeviceName"
+		ManagedDeviceID = "$ManagedDeviceID"
+		DockConnected = ($ConnectedLenovoDocks.Count -gt 0)
+		ConnectedDockId = ($ConnectedLenovoDockIds -join ",")
+		ConnectedDockSerialNumber = ($ConnectedLenovoDockSerialNumbers -join ",")
+		LastKnownDockId = "$($LastKnownLenovoDock.DockId)"
+		LastKnownDockSerialNumber = "$($LastKnownLenovoDock.SerialNumber)"
+		LastKnownDockLastSeen = "$($LastKnownLenovoDock.LastSeen)"
+		PrimaryDockId = "$($PrimaryLenovoDock.DockId)"
+		PrimaryDockSerialNumber = "$($PrimaryLenovoDock.SerialNumber)"
+		KnownDockCount = $KnownLenovoDocks.Count
+		CollectionStatus = "$($LenovoDockQueryResult.CollectionStatus)"
+		CollectionMessage = "$($LenovoDockQueryResult.CollectionMessage)"
+		InventoryDate = $LenovoDockInventoryDate
+	}
+}
+#endregion LENOVODOCKINVENTORY
+
 #region CUSTOMINVENTORY *SAMPLE*
 <# Here you can add in code for other logs to extend with *SAMPLE
 if ($CollectCustomInventory){
@@ -547,6 +880,17 @@ if ($CollectAppInventory) {
 }
 if ($CollectDeviceInventory) {
 	$LogPayLoad | Add-Member -NotePropertyMembers @{$DeviceLogName = $DeviceInventory}
+}
+if ($CollectLenovoDockInventory) {
+	if (@($LenovoDockInventory).Count -gt 0) {
+		$LogPayLoad | Add-Member -NotePropertyMembers @{$LenovoDockInventoryLogName = $LenovoDockInventory}
+	}
+	if ($null -ne $LenovoDockStatusInventory) {
+		$LogPayLoad | Add-Member -NotePropertyMembers @{$LenovoDockStatusLogName = $LenovoDockStatusInventory}
+	}
+	if (@($LenovoDockUsageInventory).Count -gt 0) {
+		$LogPayLoad | Add-Member -NotePropertyMembers @{$LenovoDockUsageLogName = $LenovoDockUsageInventory}
+	}
 }
 <# *SAMPLE*
 if ($CollectCustomInventory){

@@ -5,6 +5,23 @@ Repository for the Intune Custom Inventory solution by MSEndpointmgr.com
 > Version 1.2 requires use of version 3.5.0 of the Invoke-CustomInventoryAzureFunction.ps1 to be used in Proactive Remediations
 > This version of the Azure Function will work for any custom log you want to send securely to Log Analytics
 
+## Lenovo Dock Inventory
+The Azure Function proactive remediation script now supports collecting Lenovo Dock Manager inventory. The implementation is in `Invoke-CustomInventoryAzureFunction.ps1` and does not require Azure Function code changes when `LogControl` is set to `false`.
+
+The remediation script queries Lenovo Dock Manager data from `root\Lenovo\Dock_Manager`, caches last-known dock information locally, and sends dock data as separate Log Analytics custom logs. The local cache is stored at:
+
+`C:\ProgramData\IntuneEnhancedInventory\LenovoDockInventory.json`
+
+The Lenovo dock inventory adds these logs:
+
+* `LenovoDockInventory` - factual connected-dock observations only.
+* `LenovoDockStatus` - emitted every run, including disconnected and collection error states.
+* `LenovoDockUsage` - emitted for notable events such as new dock seen, different dock seen, primary dock changed, or collection error.
+
+When no dock is connected, the script does not send an empty `LenovoDockInventory` row. Last-known dock details remain available from the local cache and are reported through `LenovoDockStatus`.
+
+If `LogControl` is enabled in the Azure Function App settings, add `LenovoDockInventory`, `LenovoDockStatus`, and `LenovoDockUsage` to `AllowedLogNames`.
+
 ### Version History 
 Full changelog can be found here: [Changelog](https://github.com/MSEndpointMgr/IntuneEnhancedInventory/blob/main/CHANGELOG.MD)
 #### Latest Version for the Azure Function 
