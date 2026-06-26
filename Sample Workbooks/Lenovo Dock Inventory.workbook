@@ -1,0 +1,413 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# Lenovo Dock Inventory\r\n---\r\n\r\nReview Lenovo dock status, firmware versions, dock models, usage events, and docks associated with a computer name."
+      },
+      "name": "text - title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "7df8ad45-2a20-42ce-8b59-24c5189735b5",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time Range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 2592000000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 3600000
+                },
+                {
+                  "durationMs": 14400000
+                },
+                {
+                  "durationMs": 43200000
+                },
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 172800000
+                },
+                {
+                  "durationMs": 259200000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 1209600000
+                },
+                {
+                  "durationMs": 2419200000
+                },
+                {
+                  "durationMs": 2592000000
+                },
+                {
+                  "durationMs": 5184000000
+                },
+                {
+                  "durationMs": 7776000000
+                }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "1f08ca7e-e7b6-4e09-bbb7-b28f8390c368",
+            "version": "KqlParameterItem/1.0",
+            "name": "ComputerName",
+            "label": "Computer Name",
+            "type": 1,
+            "description": "Optional computer name contains filter.",
+            "value": "",
+            "timeContext": {
+              "durationMs": 0
+            },
+            "timeContextFromParameter": "TimeRange"
+          },
+          {
+            "id": "f6d88bd9-55ef-46fc-84bf-543c571d98cb",
+            "version": "KqlParameterItem/1.0",
+            "name": "DockSerial",
+            "label": "Dock Serial",
+            "type": 1,
+            "description": "Optional dock serial number contains filter.",
+            "value": "",
+            "timeContext": {
+              "durationMs": 0
+            },
+            "timeContextFromParameter": "TimeRange"
+          },
+          {
+            "id": "77b059cb-33c4-4c53-8a3f-b28e894b163b",
+            "version": "KqlParameterItem/1.0",
+            "name": "DockModel",
+            "label": "Dock Model",
+            "type": 2,
+            "isRequired": true,
+            "query": "LenovoDockInventory_CL\r\n| where isnotempty(MachineType_s)\r\n| distinct MachineType_s\r\n| sort by MachineType_s asc",
+            "value": "*",
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "showDefault": false
+            },
+            "timeContext": {
+              "durationMs": 0
+            },
+            "timeContextFromParameter": "TimeRange",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "07759de8-ac4d-41c3-9d4b-f20606f49b18",
+            "version": "KqlParameterItem/1.0",
+            "name": "FirmwareVersion",
+            "label": "Firmware Version",
+            "type": 2,
+            "isRequired": true,
+            "query": "LenovoDockInventory_CL\r\n| where isnotempty(FWVersion_s)\r\n| distinct FWVersion_s\r\n| sort by FWVersion_s asc",
+            "value": "*",
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "showDefault": false
+            },
+            "timeContext": {
+              "durationMs": 0
+            },
+            "timeContextFromParameter": "TimeRange",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "parameters - filters",
+      "styleSettings": {
+        "margin": "0px"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let LatestStatus = LenovoDockStatus_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g;\r\nLatestStatus\r\n| summarize ['Reporting Devices'] = dcount(ManagedDeviceID_g), ['Connected Devices'] = dcountif(ManagedDeviceID_g, DockConnected_b == true), ['Known Docks'] = sum(toint(KnownDockCount_d)), ['Warnings Or Errors'] = countif(CollectionStatus_s !in (\"Success\", \"NoDockConnected\")), ['Unique Connected Serials'] = dcountif(ConnectedDockSerialNumber_s, isnotempty(ConnectedDockSerialNumber_s))",
+        "size": 3,
+        "title": "Fleet Dock Overview",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "tiles",
+        "tileSettings": {
+          "showBorder": true
+        }
+      },
+      "name": "query - overview"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let DeviceContext = union isfuzzy=true\r\n    (DeviceInventory_CL\r\n    | summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\r\n    | project ManagedDeviceID_g, Manufacturer_s, DeviceModel = Model_s, SystemSKU_s, OSName_s, OSBuild_s),\r\n    (LenovoDockInventory_CL\r\n    | take 0\r\n    | project ManagedDeviceID_g, Manufacturer_s = \"\", DeviceModel = \"\", SystemSKU_s = \"\", OSName_s = \"\", OSBuild_s = \"\");\r\nLenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or FWVersion_s == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| join kind=leftouter DeviceContext on ManagedDeviceID_g\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, ManagedDeviceID_g, Manufacturer_s, DeviceModel, SystemSKU_s, OSName_s, OSBuild_s, DockId_s, SerialNumber_s, MACAddress_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, DockConnected_b, IsPrimaryDock_b, FirstSeen = todatetime(FirstSeen_s), LastSeen = todatetime(LastSeen_s), SeenCount = toint(SeenCount_d), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc, IsPrimaryDock_b desc, LastSeen desc",
+        "size": 0,
+        "showAnalytics": true,
+        "title": "Latest Dock Inventory",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "filter": true,
+          "sortBy": [
+            {
+              "itemKey": "ComputerName_s",
+              "sortOrder": 1
+            }
+          ],
+          "labelSettings": [
+            {
+              "columnId": "ComputerName_s",
+              "label": "Computer Name"
+            },
+            {
+              "columnId": "ManagedDeviceName_s",
+              "label": "Managed Device Name"
+            },
+            {
+              "columnId": "ManagedDeviceID_g",
+              "label": "Managed Device ID"
+            },
+            {
+              "columnId": "DeviceModel",
+              "label": "Device Model"
+            },
+            {
+              "columnId": "DockId_s",
+              "label": "Dock ID"
+            },
+            {
+              "columnId": "SerialNumber_s",
+              "label": "Dock Serial"
+            },
+            {
+              "columnId": "MachineType_s",
+              "label": "Dock Model"
+            },
+            {
+              "columnId": "FWVersion_s",
+              "label": "Firmware"
+            },
+            {
+              "columnId": "AvailableFWVersion_s",
+              "label": "Available Firmware"
+            }
+          ]
+        }
+      },
+      "name": "query - latest inventory"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "<br>\r\n\r\n# Firmware and Model Review\r\n---"
+      },
+      "name": "text - firmware"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or FWVersion_s == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| summarize Docks = dcount(SerialNumber_s), Devices = dcount(ManagedDeviceID_g) by FWVersion_s\r\n| order by Docks desc",
+        "size": 3,
+        "title": "Firmware Version Distribution",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "piechart"
+      },
+      "customWidth": "50",
+      "name": "query - firmware distribution",
+      "styleSettings": {
+        "maxWidth": "50"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or FWVersion_s == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| summarize Docks = dcount(SerialNumber_s), Devices = dcount(ManagedDeviceID_g) by MachineType_s, FWVersion_s\r\n| order by MachineType_s asc, FWVersion_s asc",
+        "size": 0,
+        "title": "Dock Model and Firmware Matrix",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "table",
+        "gridSettings": {
+          "filter": true,
+          "labelSettings": [
+            {
+              "columnId": "MachineType_s",
+              "label": "Dock Model"
+            },
+            {
+              "columnId": "FWVersion_s",
+              "label": "Firmware"
+            }
+          ]
+        }
+      },
+      "customWidth": "50",
+      "name": "query - model firmware matrix",
+      "styleSettings": {
+        "maxWidth": "50"
+      }
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| where isnotempty(AvailableFWVersion_s) and AvailableFWVersion_s != FWVersion_s\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, DockId_s, SerialNumber_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, LastSeen = todatetime(LastSeen_s), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc",
+        "size": 0,
+        "showAnalytics": true,
+        "title": "Docks With Available Firmware Updates",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "query - available firmware"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "<br>\r\n\r\n# Computer Lookup\r\n---\r\n\r\nEnter a computer name above to review connected and last-known dock information."
+      },
+      "name": "text - lookup"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LenovoDockStatus_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, ManagedDeviceID_g, DockConnected_b, ConnectedDockId_s, ConnectedDockSerialNumber_s, LastKnownDockId_s, LastKnownDockSerialNumber_s, LastKnownDockLastSeen = todatetime(LastKnownDockLastSeen_s), PrimaryDockId_s, PrimaryDockSerialNumber_s, KnownDockCount = toint(KnownDockCount_d), CollectionStatus_s, CollectionMessage_s, InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc",
+        "size": 0,
+        "showAnalytics": true,
+        "title": "Latest Dock Status By Computer",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "query - computer status"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, DockId_s, SerialNumber_s, MACAddress_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, IsPrimaryDock_b, FirstSeen = todatetime(FirstSeen_s), LastSeen = todatetime(LastSeen_s), SeenCount = toint(SeenCount_d), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc, IsPrimaryDock_b desc, LastSeen desc",
+        "size": 0,
+        "showAnalytics": true,
+        "title": "Connected Dock Details For Matching Computers",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "query - computer dock details"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "<br>\r\n\r\n# Dock Usage Events\r\n---"
+      },
+      "name": "text - usage"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LenovoDockUsage_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| summarize Events = count() by bin(TimeGenerated, 1d), EventType_s\r\n| render timechart",
+        "size": 1,
+        "title": "Dock Usage Event Timeline",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "visualization": "timechart"
+      },
+      "name": "query - event timeline"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "LenovoDockUsage_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| project TimeGenerated, ComputerName_s, ManagedDeviceName_s, ManagedDeviceID_g, DockId_s, SerialNumber_s, MACAddress_s, EventType_s, PreviousPrimaryDockId_s, IsPrimaryDock_b, FirstSeen = todatetime(FirstSeen_s), LastSeen = todatetime(LastSeen_s), SeenCount = toint(SeenCount_d), InventoryDate = todatetime(InventoryDate_s)\r\n| order by TimeGenerated desc",
+        "size": 0,
+        "showAnalytics": true,
+        "title": "Dock Usage Event Details",
+        "timeContext": {
+          "durationMs": 2592000000
+        },
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "gridSettings": {
+          "filter": true
+        }
+      },
+      "name": "query - event details"
+    }
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
