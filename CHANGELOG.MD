@@ -13,6 +13,11 @@
 
 ## Changelog for Inventory Collection Proactive remediation
 
+### 3.7.0 - Requires Azure Function version 1.2
+* Added Lenovo dock firmware normalization, firmware update status, and optional monitor metadata.
+* Added `LenovoDeviceHealth` inventory for Lenovo warranty, battery, and odometer information.
+* Removed `ProcessId` from Lenovo dock upload/cache data.
+
 ### 3.5.0 - Requires Azure Function version 1.2 
 * Updated output logic in correspondace with new Azure Function returning a payload object instead of string. 
 * Fixed a bug in the randomizer function, use the spread the load on the Azure Function over X minutes for larger environment.

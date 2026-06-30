@@ -9,10 +9,10 @@ The script is meant to be runned on a daily schedule either via Proactive Remedi
 .EXAMPLE
 Invoke-CustomInventoryWithAzureFunction.ps1 (Required to run as System or Administrator)
 
-.PARAMETER 
-Note the following variables 
-$RandomiseCollectionInt - if this is true the randomizer to spread load over X minutes is enabled 
-$RandomizeMinutes - the number of minutes to randomize load over. Max 50 minutes to avoid PR timeouts 
+.PARAMETER
+Note the following variables
+$RandomiseCollectionInt - if this is true the randomizer to spread load over X minutes is enabled
+$RandomizeMinutes - the number of minutes to randomize load over. Max 50 minutes to avoid PR timeouts
 
 .NOTES
 FileName:    Invoke-CustomInventory.ps1
@@ -20,28 +20,28 @@ Author:      Jan Ketil Skanke
 Contributor: Sandy Zeng / Maurice Daly
 Contact:     @JankeSkanke
 Created:     2021-01-02
-Updated:     2022-15-10 by @JankeSkanke
+Updated:     2026-06-27
 
 Version history:
 0.9.0 - (2021 - 01 - 02) Script created
 1.0.0 - (2021 - 01 - 02) Script polished cleaned up.
 1.0.1 - (2021 - 04 - 05) Added NetworkAdapter array and fixed typo
 2.0 - (2021 - 08 - 29) Moved secrets out of code - now running via Azure Function
-2.0.1 (2021-09-01) Removed all location information for privacy reasons 
-2.1 - (2021-09-08) Added section to cater for BIOS release version information, for HP, Dell and Lenovo and general bugfixes
-2.1.1 - (2021-21-10) Added MACAddress to the inventory for each NIC. 
+2.0.1 (2021-09-01) Removed all location information for privacy reasons
+2.1 - (2021-09-08) Added section to cater for BIOS release version information, for HP and Dell and general bugfixes
+2.1.1 - (2021-21-10) Added MACAddress to the inventory for each NIC.
 3.0.0 - (2022-22-02) Azure Function updated - Requires version 1.1 of Azure Function LogCollectorAPI for more dynamic log collecting
 3.0.1 - (2022-15-09) Updated to support CloudPC (Different method to find AzureAD DeviceID for verification) and fixed output error from script (Thanks to @gwblok)
 3.5.0 - (2022-14-10) Azure Function updated - Requires version 1.2 Updated output logic to be more dynamic. Fixed a bug in the randomizer function and disabled inventory collection during provisioning day.
 #>
 
 #region initialize
-# Define your azure function URL: 
+# Define your azure function URL:
 # Example 'https://<appname>.azurewebsites.net/api/<functioname>'
 
 $AzureFunctionURL = ""
 
-# Enable TLS 1.2 support 
+# Enable TLS 1.2 support
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 #Control if you want to collect App or Device Inventory or both (True = Collect)
 $CollectAppInventory = $true
@@ -54,30 +54,32 @@ $AppLogName = "AppInventory"
 $DeviceLogName = "DeviceInventory"
 # $CustomLogName = "CustomInventory" *SAMPLE*
 $Date=(Get-Date)
-# Enable or disable randomized running time to avoid azure function to be overloaded in larger environments 
-# Set to true only if needed 
-$RandomiseCollectionInt = $false 
-# Time to randomize over, max 50 minutes to avoid PR timeout. 
+
+# Enable or disable randomized running time to avoid azure function to be overloaded in larger environments
+# Set to true only if needed
+$RandomiseCollectionInt = $false
+# Time to randomize over, max 50 minutes to avoid PR timeout.
 $RandomizeMinutes = 30
 
 #endregion initialize
 
 #region functions
+#region common functions
 # Function to get Azure AD DeviceID
 function Get-AzureADDeviceID {
     <#
     .SYNOPSIS
         Get the Azure AD device ID from the local device.
-    
+
     .DESCRIPTION
         Get the Azure AD device ID from the local device.
-    
+
     .NOTES
         Author:      Nickolaj Andersen
         Contact:     @NickolajA
         Created:     2021-05-26
         Updated:     2021-05-26
-    
+
         Version history:
         1.0.0 - (2021-05-26) Function created
 		1.0.1 - (2022-15.09) Updated to support CloudPC (Different method to find AzureAD DeviceID)
@@ -85,22 +87,22 @@ function Get-AzureADDeviceID {
 	Process {
 		# Define Cloud Domain Join information registry path
 		$AzureADJoinInfoRegistryKeyPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CloudDomainJoin\JoinInfo"
-		
+
 		# Retrieve the child key name that is the thumbprint of the machine certificate containing the device identifier guid
-		$AzureADJoinInfoKey = Get-ChildItem -Path $AzureADJoinInfoRegistryKeyPath | Select-Object -ExpandProperty "PSChildName"
-		if ($AzureADJoinInfoKey -ne $null) {
+		$AzureADJoinInfoKey = Get-ChildItem -Path $AzureADJoinInfoRegistryKeyPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty "PSChildName"
+		if ($null -ne $AzureADJoinInfoKey) {
 			# Retrieve the machine certificate based on thumbprint from registry key
-            
-            if ($AzureADJoinInfoKey -ne $null) {
+
+            if ($null -ne $AzureADJoinInfoKey) {
                 # Match key data against GUID regex
                 if ([guid]::TryParse($AzureADJoinInfoKey, $([ref][guid]::Empty))) {
                     $AzureADJoinCertificate = Get-ChildItem -Path "Cert:\LocalMachine\My" -Recurse | Where-Object { $PSItem.Subject -like "CN=$($AzureADJoinInfoKey)" }
                 }
                 else {
-                    $AzureADJoinCertificate = Get-ChildItem -Path "Cert:\LocalMachine\My" -Recurse | Where-Object { $PSItem.Thumbprint -eq $AzureADJoinInfoKey }    
+                    $AzureADJoinCertificate = Get-ChildItem -Path "Cert:\LocalMachine\My" -Recurse | Where-Object { $PSItem.Thumbprint -eq $AzureADJoinInfoKey }
                 }
             }
-			if ($AzureADJoinCertificate -ne $null) {
+			if ($null -ne $AzureADJoinCertificate) {
 				# Determine the device identifier from the subject name
 				$AzureADDeviceID = ($AzureADJoinCertificate | Select-Object -ExpandProperty "Subject") -replace "CN=", ""
 				# Handle return value
@@ -108,21 +110,21 @@ function Get-AzureADDeviceID {
 			}
 		}
 	}
-} #endfunction 
+} #endfunction
 function Get-AzureADJoinDate {
     <#
     .SYNOPSIS
         Get the Azure AD Join Date from the local device.
-    
+
     .DESCRIPTION
         Get the Azure AD Join Date from the local device.
-    
+
     .NOTES
         Author:      Jan Ketil Skanke (and Nickolaj Andersen)
         Contact:     @JankeSkanke
         Created:     2021-05-26
         Updated:     2021-05-26
-    
+
         Version history:
         1.0.0 - (2021-05-26) Function created
 		1.0.1 - (2022-15.09) Updated to support CloudPC (Different method to find AzureAD DeviceID)
@@ -130,56 +132,83 @@ function Get-AzureADJoinDate {
 	Process {
 		# Define Cloud Domain Join information registry path
 		$AzureADJoinInfoRegistryKeyPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CloudDomainJoin\JoinInfo"
-		
+
 		# Retrieve the child key name that is the thumbprint of the machine certificate containing the device identifier guid
-		$AzureADJoinInfoKey = Get-ChildItem -Path $AzureADJoinInfoRegistryKeyPath | Select-Object -ExpandProperty "PSChildName"
-		if ($AzureADJoinInfoKey -ne $null) {
+		$AzureADJoinInfoKey = Get-ChildItem -Path $AzureADJoinInfoRegistryKeyPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty "PSChildName"
+		if ($null -ne $AzureADJoinInfoKey) {
 			# Retrieve the machine certificate based on thumbprint from registry key
-            
-            if ($AzureADJoinInfoKey -ne $null) {
+
+            if ($null -ne $AzureADJoinInfoKey) {
                 # Match key data against GUID regex
                 if ([guid]::TryParse($AzureADJoinInfoKey, $([ref][guid]::Empty))) {
                     $AzureADJoinCertificate = Get-ChildItem -Path "Cert:\LocalMachine\My" -Recurse | Where-Object { $PSItem.Subject -like "CN=$($AzureADJoinInfoKey)" }
                 }
                 else {
-                    $AzureADJoinCertificate = Get-ChildItem -Path "Cert:\LocalMachine\My" -Recurse | Where-Object { $PSItem.Thumbprint -eq $AzureADJoinInfoKey }    
+                    $AzureADJoinCertificate = Get-ChildItem -Path "Cert:\LocalMachine\My" -Recurse | Where-Object { $PSItem.Thumbprint -eq $AzureADJoinInfoKey }
                 }
             }
-		if ($AzureADJoinCertificate -ne $null) {
+		if ($null -ne $AzureADJoinCertificate) {
 				# Determine the device identifier from the subject name
-				$AzureADJoinDate = ($AzureADJoinCertificate | Select-Object -ExpandProperty "NotBefore") 
+				$AzureADJoinDate = ($AzureADJoinCertificate | Select-Object -ExpandProperty "NotBefore")
 				# Handle return value
 				return $AzureADJoinDate
 			}
 		}
 	}
-} #endfunction 
+} #endfunction
 #Function to get AzureAD TenantID
 function Get-AzureADTenantID {
 	# Cloud Join information registry path
 	$AzureADTenantInfoRegistryKeyPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CloudDomainJoin\TenantInfo"
 	# Retrieve the child key name that is the tenant id for AzureAD
-	$AzureADTenantID = Get-ChildItem -Path $AzureADTenantInfoRegistryKeyPath | Select-Object -ExpandProperty "PSChildName"
+	$AzureADTenantID = Get-ChildItem -Path $AzureADTenantInfoRegistryKeyPath -ErrorAction SilentlyContinue | Select-Object -ExpandProperty "PSChildName"
 	return $AzureADTenantID
-}                          
+}
 # Function to get all Installed Application
-function Get-InstalledApplications() {
+function Get-InstalledApplication() {
 	param (
 		[string]$UserSid
 	)
-	
-	New-PSDrive -PSProvider Registry -Name "HKU" -Root HKEY_USERS | Out-Null
-	$regpath = @("HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*")
-	$regpath += "HKU:\$UserSid\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
-	if (-not ([IntPtr]::Size -eq 4)) {
-		$regpath += "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-		$regpath += "HKU:\$UserSid\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+
+	$CreatedHKUDrive = $false
+	try {
+		if ($null -eq (Get-PSDrive -Name "HKU" -ErrorAction SilentlyContinue)) {
+			New-PSDrive -PSProvider Registry -Name "HKU" -Root HKEY_USERS | Out-Null
+			$CreatedHKUDrive = $true
+		}
+		$regpath = @("HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*")
+		if (-not ([string]::IsNullOrEmpty($UserSid))) {
+			$regpath += "HKU:\$UserSid\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+		}
+		if (-not ([IntPtr]::Size -eq 4)) {
+			$regpath += "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+			if (-not ([string]::IsNullOrEmpty($UserSid))) {
+				$regpath += "HKU:\$UserSid\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+			}
+		}
+		$propertyNames = 'DisplayName', 'DisplayVersion', 'Publisher', 'UninstallString', 'InstallDate'
+		$Apps = Get-ItemProperty $regpath -Name $propertyNames -ErrorAction SilentlyContinue | . { process { if ($_.DisplayName) { $_ } } } | Select-Object DisplayName, DisplayVersion, Publisher, UninstallString, InstallDate, PSPath | Sort-Object DisplayName
 	}
-	$propertyNames = 'DisplayName', 'DisplayVersion', 'Publisher', 'UninstallString'
-	$Apps = Get-ItemProperty $regpath -Name $propertyNames -ErrorAction SilentlyContinue | . { process { if ($_.DisplayName) { $_ } } } | Select-Object DisplayName, DisplayVersion, Publisher, UninstallString, PSPath | Sort-Object DisplayName
-	Remove-PSDrive -Name "HKU" | Out-Null
+	finally {
+		if ($CreatedHKUDrive) {
+			Remove-PSDrive -Name "HKU" | Out-Null
+		}
+	}
 	Return $Apps
 }
+function Get-SanitizedErrorMessage {
+	param (
+		[string]$Message
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Message)) {
+		return ""
+	}
+
+	return (($Message -replace "[\r\n]+", " ").Trim())
+}
+#endregion common functions
+
 #endregion functions
 
 #region script
@@ -187,35 +216,58 @@ function Get-InstalledApplications() {
 # ***** DO NOT EDIT IN THIS REGION *****
 # Check if device is in "provisioning day" and skip inventory until next day if true
 $JoinDate = Get-AzureADJoinDate
-$DelayDate = $JoinDate.AddDays(1)
-$CompareDate = ($Date - $DelayDate)
-if ($CompareDate.TotalDays -ge 0){
-	# Randomize over X minutes to spread load on Azure Function if enabled
-	if ($RandomiseCollectionInt -eq $true){
-		Write-Output "Randomzing execution time"
-		$RandomizerSeconds = $RandomizeMinutes * 60
-		$ExecuteInSeconds = (Get-Random -Maximum $RandomizerSeconds -Minimum 1)
-		Start-Sleep -Seconds $ExecuteInSeconds
+if ($null -ne $JoinDate) {
+	$DelayDate = $JoinDate.AddDays(1)
+	$CompareDate = ($Date - $DelayDate)
+	if ($CompareDate.TotalDays -ge 0){
+		# Randomize over X minutes to spread load on Azure Function if enabled
+		if ($RandomiseCollectionInt -eq $true){
+			Write-Output "Randomzing execution time"
+			$RandomizerSeconds = $RandomizeMinutes * 60
+			$ExecuteInSeconds = (Get-Random -Maximum $RandomizerSeconds -Minimum 1)
+			Start-Sleep -Seconds $ExecuteInSeconds
+		}
+	}
+	else {
+		Write-Output "Device recently added, inventory not to be runned before $Delaydate"
+		Exit 0
 	}
 }
 else {
-	Write-Output "Device recently added, inventory not to be runned before $Delaydate"
-    Exit 0  
+	Write-Output "Azure AD join date unavailable, skipping provisioning-day delay and continuing inventory collection"
 }
 
-#Get Common data for App and Device Inventory: 
+#Get Common data for App and Device Inventory:
 #Get Intune DeviceID and ManagedDeviceName
-if (@(Get-ChildItem HKLM:SOFTWARE\Microsoft\Enrollments\ -Recurse | Where-Object { $_.PSChildName -eq 'MS DM Server' })) {
-	$MSDMServerInfo = Get-ChildItem HKLM:SOFTWARE\Microsoft\Enrollments\ -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -eq 'MS DM Server'  }
-	$ManagedDeviceInfo = Get-ItemProperty -LiteralPath "Registry::$($MSDMServerInfo)" -ErrorAction SilentlyContinue
+try {
+	if (@(Get-ChildItem HKLM:SOFTWARE\Microsoft\Enrollments\ -Recurse -ErrorAction Stop | Where-Object { $_.PSChildName -eq 'MS DM Server' })) {
+		$MSDMServerInfo = Get-ChildItem HKLM:SOFTWARE\Microsoft\Enrollments\ -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -eq 'MS DM Server'  }
+		$ManagedDeviceInfo = Get-ItemProperty -LiteralPath "Registry::$($MSDMServerInfo)" -ErrorAction SilentlyContinue
 	}
+}
+catch {
+	$ManagedDeviceInfo = $null
+	Write-Output "Managed device enrollment lookup failed: $($_.Exception.Message)"
+}
 $ManagedDeviceName = $ManagedDeviceInfo.EntDeviceName
 $ManagedDeviceID = $ManagedDeviceInfo.EntDMID
 $AzureADDeviceID = Get-AzureADDeviceID
-$AzureADTenantID = Get-AzureADTenantID
+try {
+	$AzureADTenantID = Get-AzureADTenantID
+}
+catch {
+	$AzureADTenantID = $null
+	Write-Output "Azure AD tenant ID lookup failed: $($_.Exception.Message)"
+}
 
 #Get Computer Info
-$ComputerInfo = Get-CimInstance -ClassName Win32_ComputerSystem
+try {
+	$ComputerInfo = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
+}
+catch {
+	$ComputerInfo = [PSCustomObject]@{}
+	Write-Output "Computer system lookup failed: $($_.Exception.Message)"
+}
 $ComputerName = $ComputerInfo.Name
 $ComputerManufacturer = $ComputerInfo.Manufacturer
 
@@ -226,18 +278,42 @@ if ($ComputerManufacturer -match "HP|Hewlett-Packard") {
 
 #region DEVICEINVENTORY
 if ($CollectDeviceInventory) {
-	
+
 	# Get Windows Update Service Settings
-	$DefaultAUService = (New-Object -ComObject "Microsoft.Update.ServiceManager").Services | Where-Object { $_.isDefaultAUService -eq $True } | Select-Object Name
-	$AUMeteredNetwork = (Get-ItemProperty -Path HKLM:\Software\Microsoft\WindowsUpdate\UX\Settings\).AllowAutoWindowsUpdateDownloadOverMeteredNetwork 
+	try {
+		$DefaultAUService = (New-Object -ComObject "Microsoft.Update.ServiceManager").Services | Where-Object { $_.isDefaultAUService -eq $True } | Select-Object Name
+	}
+	catch {
+		$DefaultAUService = $null
+		Write-Output "Windows Update service lookup failed: $($_.Exception.Message)"
+	}
+	try {
+		$AUMeteredNetwork = (Get-ItemProperty -Path HKLM:\Software\Microsoft\WindowsUpdate\UX\Settings\ -ErrorAction Stop).AllowAutoWindowsUpdateDownloadOverMeteredNetwork
+	}
+	catch {
+		$AUMeteredNetwork = $null
+		Write-Output "Windows Update metered-network lookup failed: $($_.Exception.Message)"
+	}
 	if ($AUMeteredNetwork -eq "0") {
 		$AUMetered = "false"
 	} else { $AUMetered = "true" }
-	
-	
-	# Get Computer Inventory Information 
-	$ComputerOSInfo = Get-CimInstance -ClassName Win32_OperatingSystem
-	$ComputerBiosInfo = Get-CimInstance -ClassName Win32_Bios
+
+
+	# Get Computer Inventory Information
+	try {
+		$ComputerOSInfo = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
+	}
+	catch {
+		$ComputerOSInfo = [PSCustomObject]@{}
+		Write-Output "Operating system lookup failed: $($_.Exception.Message)"
+	}
+	try {
+		$ComputerBiosInfo = Get-CimInstance -ClassName Win32_Bios -ErrorAction Stop
+	}
+	catch {
+		$ComputerBiosInfo = [PSCustomObject]@{}
+		Write-Output "BIOS lookup failed: $($_.Exception.Message)"
+	}
 	$ComputerModel = $ComputerInfo.Model
 	$ComputerLastBoot = $ComputerOSInfo.LastBootUpTime
 	$ComputerUptime = [int](New-TimeSpan -Start $ComputerLastBoot -End $Date).Days
@@ -282,7 +358,7 @@ if ($CollectDeviceInventory) {
 			9 {$ComputerPCSystemTypeEx = "Maximum"}
 			default {$ComputerPCSystemTypeEx = "Unspecified"}
 		}
-		
+
 	$ComputerPhysicalMemory = [Math]::Round(($ComputerInfo.TotalPhysicalMemory / 1GB))
 	$ComputerOSBuild = $ComputerOSInfo.BuildNumber
 	$ComputerOSRevision = (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name UBR).UBR
@@ -291,103 +367,115 @@ if ($CollectDeviceInventory) {
 	$ComputerProcessorName = $ComputerCPU.Name | Get-Unique
 	$ComputerNumberOfCores = $ComputerCPU.NumberOfCores | Get-Unique
 	$ComputerNumberOfLogicalProcessors = $ComputerCPU.NumberOfLogicalProcessors | Get-Unique
-	$ComputerSystemSKU = (Get-CIMInstance -ClassName MS_SystemInformation -NameSpace root\WMI).SystemSku.Trim()
-	
+	try {
+		$ComputerSystemInformation = Get-CimInstance -ClassName MS_SystemInformation -NameSpace root\WMI -ErrorAction Stop
+		$ComputerSystemSKU = $ComputerSystemInformation.SystemSku.Trim()
+	}
+	catch {
+		$ComputerSystemInformation = $null
+		$ComputerSystemSKU = $null
+		Write-Output "System SKU lookup failed: $($_.Exception.Message)"
+	}
+
 	try {
 		$TPMValues = Get-Tpm -ErrorAction SilentlyContinue | Select-Object -Property TPMReady, TPMPresent, TPMEnabled, TPMActivated, ManagedAuthLevel
 	} catch {
 		$TPMValues = $null
 	}
-	
+
 	try {
 		$ComputerTPMThumbprint = (Get-TpmEndorsementKeyInfo).AdditionalCertificates.Thumbprint
 	} catch {
 		$ComputerTPMThumbprint = $null
 	}
-	
+
 	try {
 		$BitLockerInfo = Get-BitLockerVolume -MountPoint $env:SystemDrive | Select-Object -Property *
 	} catch {
 		$BitLockerInfo = $null
 	}
-	
+
 	$ComputerTPMReady = $TPMValues.TPMReady
 	$ComputerTPMPresent = $TPMValues.TPMPresent
 	$ComputerTPMEnabled = $TPMValues.TPMEnabled
 	$ComputerTPMActivated = $TPMValues.TPMActivated
-	
+
 	$ComputerBitlockerCipher = $BitLockerInfo.EncryptionMethod
 	$ComputerBitlockerStatus = $BitLockerInfo.VolumeStatus
 	$ComputerBitlockerProtection = $BitLockerInfo.ProtectionStatus
 	$ComputerDefaultAUService = $DefaultAUService.Name
 	$ComputerAUMetered = $AUMetered
-	
+
 	# Get BIOS information
 	# Determine manufacturer specific information
-	switch -Wildcard ($ComputerManufacturer) {
-		"*Microsoft*" {
-			$ComputerManufacturer = "Microsoft"
-			$ComputerModel = (Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty Model).Trim()
-			$ComputerSystemSKU = Get-WmiObject -Namespace root\wmi -Class MS_SystemInformation | Select-Object -ExpandProperty SystemSKU
-		}
-		"*HP*" {
-			$ComputerModel = (Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty Model).Trim()
-			$ComputerSystemSKU = (Get-CIMInstance -ClassName MS_SystemInformation -NameSpace root\WMI).BaseBoardProduct.Trim()
-			
-			# Obtain current BIOS release
-			$CurrentBIOSProperties = (Get-WmiObject -Class Win32_BIOS | Select-Object -Property *)
-			
-			# Detect new versus old BIOS formats
-			switch -wildcard ($($CurrentBIOSProperties.SMBIOSBIOSVersion)) {
-				"*ver*" {
-					if ($CurrentBIOSProperties.SMBIOSBIOSVersion -match '.F.\d+$') {
-						$ComputerBiosVersion = ($CurrentBIOSProperties.SMBIOSBIOSVersion -split "Ver.")[1].Trim()
-					} else {
-						$ComputerBiosVersion = [System.Version]::Parse(($CurrentBIOSProperties.SMBIOSBIOSVersion).TrimStart($CurrentBIOSProperties.SMBIOSBIOSVersion.Split(".")[0]).TrimStart(".").Trim().Split(" ")[0])
+	try {
+		switch -Wildcard ($ComputerManufacturer) {
+			"*Microsoft*" {
+				$ComputerManufacturer = "Microsoft"
+				$ComputerModel = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop | Select-Object -ExpandProperty Model).Trim()
+				$ComputerSystemSKU = Get-CimInstance -Namespace root\wmi -ClassName MS_SystemInformation -ErrorAction Stop | Select-Object -ExpandProperty SystemSKU
+			}
+			"*HP*" {
+				$ComputerModel = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop | Select-Object -ExpandProperty Model).Trim()
+				$ComputerSystemSKU = (Get-CimInstance -ClassName MS_SystemInformation -NameSpace root\WMI -ErrorAction Stop).BaseBoardProduct.Trim()
+
+				# Obtain current BIOS release
+				$CurrentBIOSProperties = (Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop | Select-Object -Property *)
+
+				# Detect new versus old BIOS formats
+				switch -wildcard ($($CurrentBIOSProperties.SMBIOSBIOSVersion)) {
+					"*ver*" {
+						if ($CurrentBIOSProperties.SMBIOSBIOSVersion -match '.F.\d+$') {
+							$ComputerBiosVersion = ($CurrentBIOSProperties.SMBIOSBIOSVersion -split "Ver.")[1].Trim()
+						} else {
+							$ComputerBiosVersion = [System.Version]::Parse(($CurrentBIOSProperties.SMBIOSBIOSVersion).TrimStart($CurrentBIOSProperties.SMBIOSBIOSVersion.Split(".")[0]).TrimStart(".").Trim().Split(" ")[0])
+						}
+					}
+					default {
+						$ComputerBiosVersion = "$($CurrentBIOSProperties.SystemBiosMajorVersion).$($CurrentBIOSProperties.SystemBiosMinorVersion)"
 					}
 				}
-				default {
-					$ComputerBiosVersion = "$($CurrentBIOSProperties.SystemBiosMajorVersion).$($CurrentBIOSProperties.SystemBiosMinorVersion)"
-				}
+			}
+			"*Dell*" {
+				$ComputerManufacturer = "Dell"
+				$ComputerModel = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop | Select-Object -ExpandProperty Model).Trim()
+				$ComputerSystemSKU = (Get-CimInstance -ClassName MS_SystemInformation -NameSpace root\WMI -ErrorAction Stop).SystemSku.Trim()
+
+				# Obtain current BIOS release
+				$ComputerBiosVersion = (Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop | Select-Object -ExpandProperty SMBIOSBIOSVersion).Trim()
 			}
 		}
-		"*Dell*" {
-			$ComputerManufacturer = "Dell"
-			$ComputerModel = (Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty Model).Trim()
-			$ComputerSystemSKU = (Get-CIMInstance -ClassName MS_SystemInformation -NameSpace root\WMI).SystemSku.Trim()
-			
-			# Obtain current BIOS release
-			$ComputerBiosVersion = (Get-WmiObject -Class Win32_BIOS | Select-Object -ExpandProperty SMBIOSBIOSVersion).Trim()
-			
-		}
-		"*Lenovo*" {
-			$ComputerManufacturer = "Lenovo"
-			$ComputerModel = (Get-WmiObject -Class Win32_ComputerSystemProduct | Select-Object -ExpandProperty Version).Trim()
-			$ComputerSystemSKU = ((Get-WmiObject -Class Win32_ComputerSystem | Select-Object -ExpandProperty Model).SubString(0, 4)).Trim()
-			
-			# Obtain current BIOS release
-			$CurrentBIOSProperties = (Get-WmiObject -Class Win32_BIOS | Select-Object -Property *)
-			
-			# Obtain current BIOS release
-			#$ComputerBiosVersion = ((Get-WmiObject -Class Win32_BIOS | Select-Object -Property *).SMBIOSBIOSVersion).SubString(0, 8)
-			$ComputerBiosVersion = "$($CurrentBIOSProperties.SystemBiosMajorVersion).$($CurrentBIOSProperties.SystemBiosMinorVersion)"
-		}
 	}
-	
+	catch {
+		Write-Output "Manufacturer-specific BIOS lookup failed: $($_.Exception.Message)"
+	}
+
 	#Get network adapters
 	$NetWorkArray = @()
-	
-	$CurrentNetAdapters = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
-	
+
+	try {
+		$CurrentNetAdapters = Get-NetAdapter -ErrorAction Stop | Where-Object { $_.Status -eq 'Up' }
+	}
+	catch {
+		$CurrentNetAdapters = @()
+		Write-Output "Network adapter lookup failed: $($_.Exception.Message)"
+	}
+
 	foreach ($CurrentNetAdapter in $CurrentNetAdapters) {
-		$IPConfiguration = Get-NetIPConfiguration -InterfaceIndex $CurrentNetAdapter[0].ifIndex
+		try {
+			$IPConfiguration = Get-NetIPConfiguration -InterfaceIndex $CurrentNetAdapter[0].ifIndex -ErrorAction Stop
+		}
+		catch {
+			$IPConfiguration = $null
+			Write-Output "IP configuration lookup failed for interface $($CurrentNetAdapter.InterfaceAlias): $($_.Exception.Message)"
+		}
 		$ComputerNetInterfaceDescription = $CurrentNetAdapter.InterfaceDescription
 		$ComputerNetProfileName = $IPConfiguration.NetProfile.Name
 		$ComputerNetIPv4Adress = $IPConfiguration.IPv4Address.IPAddress
 		$ComputerNetInterfaceAlias = $CurrentNetAdapter.InterfaceAlias
 		$ComputerNetIPv4DefaultGateway = $IPConfiguration.IPv4DefaultGateway.NextHop
 		$ComputerNetMacAddress = $CurrentNetAdapter.MacAddress
-		
+
 		$tempnetwork = New-Object -TypeName PSObject
 		$tempnetwork | Add-Member -MemberType NoteProperty -Name "NetInterfaceDescription" -Value "$ComputerNetInterfaceDescription" -Force
 		$tempnetwork | Add-Member -MemberType NoteProperty -Name "NetProfileName" -Value "$ComputerNetProfileName" -Force
@@ -398,43 +486,70 @@ if ($CollectDeviceInventory) {
 		$NetWorkArray += $tempnetwork
 	}
 	[System.Collections.ArrayList]$NetWorkArrayList = $NetWorkArray
-	
+
 	# Get Disk Health
 	$DiskArray = @()
-	$Disks = Get-PhysicalDisk | Where-Object { $_.BusType -match "NVMe|SATA|SAS|ATAPI|RAID" }
-	
+	[System.Collections.ArrayList]$DiskHealthArrayList = $DiskArray
+	try {
+		$Disks = Get-PhysicalDisk -ErrorAction Stop | Where-Object { $_.BusType -match "NVMe|SATA|SAS|ATAPI|RAID" }
+	}
+	catch {
+		$Disks = @()
+		Write-Output "Physical disk lookup failed: $($_.Exception.Message)"
+	}
+
 	# Loop through each disk
 	foreach ($Disk in ($Disks | Sort-Object DeviceID)) {
-		# Obtain disk health information from current disk
-		$DiskHealth = Get-PhysicalDisk -UniqueId $($Disk.UniqueId) | Get-StorageReliabilityCounter | Select-Object -Property Wear, ReadErrorsTotal, ReadErrorsUncorrected, WriteErrorsTotal, WriteErrorsUncorrected, Temperature, TemperatureMax
-		
-		# Obtain media type
-		$DriveDetails = Get-PhysicalDisk -UniqueId $($Disk.UniqueId) | Select-Object MediaType, HealthStatus
-		$DriveMediaType = $DriveDetails.MediaType
-		$DriveHealthState = $DriveDetails.HealthStatus
-		$DiskTempDelta = [int]$($DiskHealth.Temperature) - [int]$($DiskHealth.TemperatureMax)
-		
+		try {
+			# Obtain disk health information from current disk
+			$DiskHealth = Get-PhysicalDisk -UniqueId $($Disk.UniqueId) -ErrorAction Stop | Get-StorageReliabilityCounter -ErrorAction Stop | Select-Object -Property Wear, ReadErrorsTotal, ReadErrorsUncorrected, WriteErrorsTotal, WriteErrorsUncorrected, Temperature, TemperatureMax
+
+			# Obtain media type
+			$DriveDetails = Get-PhysicalDisk -UniqueId $($Disk.UniqueId) -ErrorAction Stop | Select-Object MediaType, HealthStatus
+			$DriveMediaType = $DriveDetails.MediaType
+			$DriveHealthState = $DriveDetails.HealthStatus
+			if (($null -ne $DiskHealth.Temperature) -and ($null -ne $DiskHealth.TemperatureMax)) {
+				$DiskTempDelta = [int]$($DiskHealth.Temperature) - [int]$($DiskHealth.TemperatureMax)
+			}
+			else {
+				$DiskTempDelta = $null
+			}
+		}
+		catch {
+			$DiskHealth = $null
+			$DriveMediaType = $Disk.MediaType
+			$DriveHealthState = $Disk.HealthStatus
+			$DiskTempDelta = $null
+			Write-Output "Disk reliability lookup failed for disk $($Disk.DeviceID): $($_.Exception.Message)"
+		}
+
 		# Create custom PSObject
 		$DiskHealthState = new-object -TypeName PSObject
-		
+		$DiskWear = if ($null -ne $DiskHealth.Wear) { [int]($DiskHealth.Wear) } else { $null }
+		$DiskReadErrorsTotal = if ($null -ne $DiskHealth.ReadErrorsTotal) { [int]($DiskHealth.ReadErrorsTotal) } else { $null }
+
 		# Create disk entry
 		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk Number" -Value $Disk.DeviceID
 		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "FriendlyName" -Value $($Disk.FriendlyName)
 		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "HealthStatus" -Value $DriveHealthState
 		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "MediaType" -Value $DriveMediaType
-		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk Wear" -Value $([int]($DiskHealth.Wear))
-		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) Read Errors" -Value $([int]($DiskHealth.ReadErrorsTotal))
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk Wear" -Value $DiskWear
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) Read Errors" -Value $DiskReadErrorsTotal
 		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) Temperature Delta" -Value $DiskTempDelta
-		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) ReadErrorsUncorrected" -Value $($Disk.ReadErrorsUncorrected)
-		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) ReadErrorsTotal" -Value $($Disk.ReadErrorsTotal)
-		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) WriteErrorsUncorrected" -Value $($Disk.WriteErrorsUncorrected)
-		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) WriteErrorsTotal" -Value $($Disk.WriteErrorsTotal)
-		
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) ReadErrorsUncorrected" -Value $($DiskHealth.ReadErrorsUncorrected)
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) ReadErrorsTotal" -Value $($DiskHealth.ReadErrorsTotal)
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) WriteErrorsUncorrected" -Value $($DiskHealth.WriteErrorsUncorrected)
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "Disk $($Disk.DeviceID) WriteErrorsTotal" -Value $($DiskHealth.WriteErrorsTotal)
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "ReadErrorsUncorrected" -Value $($DiskHealth.ReadErrorsUncorrected)
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "ReadErrorsTotal" -Value $($DiskHealth.ReadErrorsTotal)
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "WriteErrorsUncorrected" -Value $($DiskHealth.WriteErrorsUncorrected)
+		$DiskHealthState | Add-Member -MemberType NoteProperty -Name "WriteErrorsTotal" -Value $($DiskHealth.WriteErrorsTotal)
+
 		$DiskArray += $DiskHealthState
 		[System.Collections.ArrayList]$DiskHealthArrayList = $DiskArray
 	}
-	
-	
+
+
 	# Create JSON to Upload to Log Analytics
 	$Inventory = New-Object System.Object
 	$Inventory | Add-Member -MemberType NoteProperty -Name "ManagedDeviceName" -Value "$ManagedDeviceName" -Force
@@ -476,17 +591,17 @@ if ($CollectDeviceInventory) {
 	$Inventory | Add-Member -MemberType NoteProperty -Name "BitlockerProtectionStatus" -Value "$ComputerBitlockerProtection" -Force
 	$Inventory | Add-Member -MemberType NoteProperty -Name "NetworkAdapters" -Value $NetWorkArrayList -Force
 	$Inventory | Add-Member -MemberType NoteProperty -Name "DiskHealth" -Value $DiskHealthArrayList -Force
-	
-	
+
+
 	$DeviceInventory = $Inventory
-	
+
 }
 #endregion DEVICEINVENTORY
 
 #region APPINVENTORY
 if ($CollectAppInventory) {
 	#$AppLog = "AppInventory"
-	
+
 	#Get SID of current interactive users
 	$CurrentLoggedOnUser = (Get-CimInstance win32_computersystem).UserName
 	if (-not ([string]::IsNullOrEmpty($CurrentLoggedOnUser))) {
@@ -496,14 +611,22 @@ if ($CollectAppInventory) {
 	} else {
 		$UserSid = $null
 	}
-	
+
 	#Get Apps for system and current user
-	$MyApps = Get-InstalledApplications -UserSid $UserSid
+	$MyApps = Get-InstalledApplication -UserSid $UserSid
 	$UniqueApps = ($MyApps | Group-Object Displayname | Where-Object { $_.Count -eq 1 }).Group
 	$DuplicatedApps = ($MyApps | Group-Object Displayname | Where-Object { $_.Count -gt 1 }).Group
-	$NewestDuplicateApp = ($DuplicatedApps | Group-Object DisplayName) | ForEach-Object { $_.Group | Sort-Object [version]DisplayVersion -Descending | Select-Object -First 1 }
+	$NewestDuplicateApp = ($DuplicatedApps | Group-Object DisplayName) | ForEach-Object {
+		$_.Group | Sort-Object `
+			@{ Expression = { $ParsedVersion = $null; [version]::TryParse([string]$_.DisplayVersion, [ref]$ParsedVersion) }; Descending = $true },
+			@{ Expression = { $ParsedVersion = $null; if ([version]::TryParse([string]$_.DisplayVersion, [ref]$ParsedVersion)) { $ParsedVersion } else { [version]"0.0" } }; Descending = $true },
+			@{ Expression = { $_.DisplayVersion }; Descending = $true },
+			@{ Expression = { $_.InstallDate }; Descending = $true },
+			@{ Expression = { $_.PSPath }; Descending = $false } |
+			Select-Object -First 1
+	}
 	$CleanAppList = $UniqueApps + $NewestDuplicateApp | Sort-Object DisplayName
-	
+
 	$AppArray = @()
 	foreach ($App in $CleanAppList) {
 		$tempapp = New-Object -TypeName PSObject
@@ -519,7 +642,7 @@ if ($CollectAppInventory) {
 		$tempapp | Add-Member -MemberType NoteProperty -Name "AppUninstallRegPath" -Value $app.PSPath.Split("::")[-1]
 		$AppArray += $tempapp
 	}
-	
+
 	$AppInventory = $AppArray
 }
 #endregion APPINVENTORY
@@ -534,15 +657,15 @@ if ($CollectCustomInventory){
 
 #region compose
 # Start composing logdata
-# If additional logs is collected, remember to add to main payload 
+# If additional logs is collected, remember to add to main payload
 $date = Get-Date -Format "dd-MM HH:mm"
 $OutputMessage = "InventoryDate:$date "
 
 $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
 $headers.Add("Content-Type", "application/json")
 
-# Adding every log payload into PSObject for main payload - Additional logs can be added 
-$LogPayLoad = New-Object -TypeName PSObject 
+# Adding every log payload into PSObject for main payload - Additional logs can be added
+$LogPayLoad = New-Object -TypeName PSObject
 if ($CollectAppInventory) {
 	$LogPayLoad | Add-Member -NotePropertyMembers @{$AppLogName = $AppInventory}
 }
@@ -561,7 +684,7 @@ $MainPayLoad = [PSCustomObject]@{
 	AzureADDeviceID = $AzureADDeviceID
 	LogPayloads = $LogPayLoad
 }
-$MainPayLoadJson = $MainPayLoad| ConvertTo-Json -Depth 9	
+$MainPayLoadJson = $MainPayLoad| ConvertTo-Json -Depth 9
 
 #endregion compose
 
@@ -601,17 +724,16 @@ if ($DryRun -eq $true) {
 }
 #endregion dryrun
 
-#region ingestion 
-# NO NEED TO EDIT BELOW THIS LINE 
-# New in version 3.5.0 - Now it requires functionapp version 1.2 
-# Set default exit code to 0 
+#region ingestion
+# NO NEED TO EDIT BELOW THIS LINE
+# Set default exit code to 0
 $ExitCode = 0
 
 # Attempt to send data to API
 try {
 	$ResponseInventory = Invoke-RestMethod $AzureFunctionURL -Method 'POST' -Headers $headers -Body $MainPayLoadJson
     foreach ($response in $ResponseInventory){
-        if ($response.response -match "200"){
+        if ($response.response -match "^200:"){
         $OutputMessage = $OutPutMessage + "OK: $($response.logname) $($response.response) "
         }
         else{
@@ -619,7 +741,7 @@ try {
         $ExitCode = 1
         }
     }
-} 
+}
 catch {
 	$ResponseInventory = "Error Code: $($_.Exception.Response.StatusCode.value__)"
 	$ResponseMessage = $_.Exception.Message
@@ -629,8 +751,8 @@ catch {
 # Exit script with correct output and code
 
 Write-Output $OutputMessage
-Exit $ExitCode																							
-#endregion ingestion 
+Exit $ExitCode
+#endregion ingestion
 
 #endregion script
 
