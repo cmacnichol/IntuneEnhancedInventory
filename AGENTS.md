@@ -35,6 +35,18 @@ az bicep build --file 'Deploy\SecuredEnhancedInventory.bicep'
 
 Validates Bicep template compilation when Azure CLI is available.
 
+Local validation tooling for this workstation:
+
+- Azure Functions Core Tools: `C:\Program Files\Microsoft\Azure Functions Core Tools\func.exe` (verified version `4.12.1`)
+- Azure CLI: `C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin\az.cmd` (verified version `2.87.0`)
+- Bicep CLI: `C:\tmp\bicep.exe` (verified version `0.44.1`)
+
+`az` and `func` may not be visible until the terminal PATH is refreshed after install. Use the explicit paths above when needed. When running Azure CLI from a sandboxed environment, set a writable config directory first:
+
+```powershell
+$env:AZURE_CONFIG_DIR = 'C:\Git\IntuneEnhancedInventory\.azconfig-validation'
+```
+
 ## Coding Style & Naming Conventions
 
 Use PowerShell with clear verb-noun function names, PascalCase variables, and four-space indentation or the surrounding file’s existing tab style. Prefer `Get-CimInstance` over `Get-WmiObject` for new code. Keep JSON payload field names stable because Azure Workbooks and Log Analytics queries may depend on them.
