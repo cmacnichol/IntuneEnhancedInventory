@@ -88,10 +88,11 @@ resource FunctionAppInsightsComponents 'Microsoft.Insights/components@2020-02-02
   kind: 'web'
   properties: {
     Application_Type: 'web'
+    WorkspaceResourceId: LogAnalyticsWorkspace.id
   }
   tags: union(Tags, 
     {
-    'hidden-link:${resourceId('Microsoft.Web/sites', FunctionAppInsightsName)}': 'Resource'
+    'hidden-link:${resourceId('Microsoft.Web/sites', FunctionAppName)}': 'Resource'
   })
 }
 
@@ -209,7 +210,7 @@ resource FunctionAppZipDeploy 'Microsoft.Web/sites/extensions@2015-08-01' = {
   parent: FunctionApp
   name: 'ZipDeploy'
   properties: {
-      packageUri: 'https://github.com/MSEndpointMgr/IntuneEnhancedInventory/releases/download/v1.2/LogCollectorAPI.zip'
+      packageUri: 'https://raw.githubusercontent.com/cmacnichol/IntuneEnhancedInventory/main/Packages/LogCollectorAPI.zip'
   }
 }
 

@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.11.1.770",
-      "templateHash": "6161430488011687667"
+      "version": "0.44.1.10279",
+      "templateHash": "18347204261519525925"
     }
   },
   "parameters": {
@@ -64,7 +64,7 @@
       "apiVersion": "2015-08-01",
       "name": "[format('{0}/{1}', parameters('FunctionAppName'), 'ZipDeploy')]",
       "properties": {
-        "packageUri": "https://github.com/MSEndpointMgr/IntuneEnhancedInventory/releases/download/v1.2/LogCollectorAPI.zip"
+        "packageUri": "https://raw.githubusercontent.com/cmacnichol/IntuneEnhancedInventory/main/Packages/LogCollectorAPI.zip"
       }
     }
   ],

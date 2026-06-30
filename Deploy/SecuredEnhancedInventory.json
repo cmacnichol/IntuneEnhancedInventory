@@ -4,8 +4,8 @@
   "metadata": {
     "_generator": {
       "name": "bicep",
-      "version": "0.11.1.770",
-      "templateHash": "9761768728791091167"
+      "version": "0.44.1.10279",
+      "templateHash": "6793711269250734517"
     }
   },
   "parameters": {
@@ -18,23 +18,23 @@
     "FunctionAppServicePlanSKU": {
       "type": "string",
       "defaultValue": "Y1",
-      "metadata": {
-        "description": "Select the desired App Service Plan of the Function App. Select Y1 for free consumption based deployment."
-      },
       "allowedValues": [
         "Y1",
         "EP1",
         "EP2",
         "EP3"
-      ]
+      ],
+      "metadata": {
+        "description": "Select the desired App Service Plan of the Function App. Select Y1 for free consumption based deployment."
+      }
     },
     "KeyVaultName": {
       "type": "string",
+      "minLength": 3,
+      "maxLength": 24,
       "metadata": {
         "description": "Provide a name for the Key Vault. Name must be globally unique in Azure and between 3-24 characters, containing only 0-9, a-z, A-Z, and - characters."
-      },
-      "maxLength": 24,
-      "minLength": 3
+      }
     },
     "LogAnalyticsWorkspaceName": {
       "type": "string",
@@ -130,9 +130,10 @@
       "location": "[resourceGroup().location]",
       "kind": "web",
       "properties": {
-        "Application_Type": "web"
+        "Application_Type": "web",
+        "WorkspaceResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('LogAnalyticsSubcriptionID'), parameters('LogAnalyticsResourceGroup')), 'Microsoft.OperationalInsights/workspaces', parameters('LogAnalyticsWorkspaceName'))]"
       },
-      "tags": "[union(parameters('Tags'), createObject(format('hidden-link:{0}', resourceId('Microsoft.Web/sites', variables('FunctionAppInsightsName'))), 'Resource'))]"
+      "tags": "[union(parameters('Tags'), createObject(format('hidden-link:{0}', resourceId('Microsoft.Web/sites', parameters('FunctionAppName'))), 'Resource'))]"
     },
     {
       "type": "Microsoft.Web/sites",
@@ -244,7 +245,7 @@
       "apiVersion": "2015-08-01",
       "name": "[format('{0}/{1}', parameters('FunctionAppName'), 'ZipDeploy')]",
       "properties": {
-        "packageUri": "https://github.com/MSEndpointMgr/IntuneEnhancedInventory/releases/download/v1.2/LogCollectorAPI.zip"
+        "packageUri": "https://raw.githubusercontent.com/cmacnichol/IntuneEnhancedInventory/main/Packages/LogCollectorAPI.zip"
       },
       "dependsOn": [
         "[resourceId('Microsoft.Web/sites', parameters('FunctionAppName'))]"
@@ -283,7 +284,7 @@
   "outputs": {
     "functionAppTriggerUrl": {
       "type": "string",
-      "value": "[format('https://{0}/api/LogCollectorAPI', reference(resourceId('Microsoft.Web/sites', parameters('FunctionAppName'))).defaultHostName)]"
+      "value": "[format('https://{0}/api/LogCollectorAPI', reference(resourceId('Microsoft.Web/sites', parameters('FunctionAppName')), '2020-12-01').defaultHostName)]"
     }
   }
 }
