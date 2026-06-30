@@ -1,5 +1,11 @@
 # Changelog for Intune Enhanced Inventory Solution 
 
+## Unreleased
+
+* Updated the Azure Function extension bundle range in `host.json` from deprecated 2.x to supported 4.x (`[4.0.0, 5.0.0)`).
+* Rebuilt `Packages/LogCollectorAPI.zip` so the deployment package includes the updated Azure Function `host.json`.
+* Moved Lenovo-specific README content under a new `Custom Inventory Script` section so the repository overview stays focused on the Azure Function inventory flow.
+
 ## Changelog for Log Collector API Azure Function
 
 ### 1.2 
