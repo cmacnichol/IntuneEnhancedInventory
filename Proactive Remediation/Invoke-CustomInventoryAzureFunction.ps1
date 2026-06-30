@@ -48,21 +48,25 @@ $AzureFunctionURL = ""
 #Control if you want to collect App or Device Inventory or both (True = Collect)
 $CollectAppInventory = $true
 $CollectDeviceInventory = $true
-$CollectLenovoDockInventory = $true
-$CollectLenovoDeviceHealthInventory = $true
 # $CollectCustomInventory = $true *SAMPLE*
 $DryRun = $false
 
 #Set Log Analytics Log Name
 $AppLogName = "AppInventory"
 $DeviceLogName = "DeviceInventory"
+# $CustomLogName = "CustomInventory" *SAMPLE*
+$Date=(Get-Date)
+
+#region Lenovo inventory settings
+$CollectLenovoDockInventory = $true
+$CollectLenovoDeviceHealthInventory = $true
 $LenovoDockInventoryLogName = "LenovoDockInventory"
 $LenovoDockStatusLogName = "LenovoDockStatus"
 $LenovoDockUsageLogName = "LenovoDockUsage"
 $LenovoDeviceHealthLogName = "LenovoDeviceHealth"
-# $CustomLogName = "CustomInventory" *SAMPLE*
-$Date=(Get-Date)
 $LenovoDockCachePath = "C:\ProgramData\IntuneEnhancedInventory\LenovoDockInventory.json"
+#endregion Lenovo inventory settings
+
 # Enable or disable randomized running time to avoid azure function to be overloaded in larger environments
 # Set to true only if needed
 $RandomiseCollectionInt = $false
@@ -72,6 +76,7 @@ $RandomizeMinutes = 30
 #endregion initialize
 
 #region functions
+#region common functions
 # Function to get Azure AD DeviceID
 function Get-AzureADDeviceID {
     <#
@@ -203,7 +208,7 @@ function Get-InstalledApplication() {
 	}
 	Return $Apps
 }
-function Get-SanitizedInventoryMessage {
+function Get-SanitizedErrorMessage {
 	param (
 		[string]$Message
 	)
@@ -214,6 +219,9 @@ function Get-SanitizedInventoryMessage {
 
 	return (($Message -replace "[\r\n]+", " ").Trim())
 }
+#endregion common functions
+
+#region lenovo functions
 function ConvertTo-LenovoNullableBool {
 	param (
 		[object]$Value
@@ -437,19 +445,19 @@ function Get-LenovoDockDevice {
 				$DockInfos = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -ClassName DockInfo -ErrorAction Stop)
 			}
 			catch {
-				$OptionalMessages += "DockInfo lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+				$OptionalMessages += "DockInfo lookup failed: $(Get-SanitizedErrorMessage -Message $_.Exception.Message)"
 			}
 			try {
 				$DisplayDevices = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -ClassName DockDeviceDisplayPort -ErrorAction Stop)
 			}
 			catch {
-				$OptionalMessages += "Dock display lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+				$OptionalMessages += "Dock display lookup failed: $(Get-SanitizedErrorMessage -Message $_.Exception.Message)"
 			}
 			try {
 				$Result.DockManagerEvents = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -ClassName DockManager -ErrorAction Stop)
 			}
 			catch {
-				$OptionalMessages += "DockManager event lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+				$OptionalMessages += "DockManager event lookup failed: $(Get-SanitizedErrorMessage -Message $_.Exception.Message)"
 			}
 
 			if ($OptionalMessages.Count -gt 0) {
@@ -489,7 +497,7 @@ function Get-LenovoDockDevice {
 	}
 	catch {
 		$Result.CollectionStatus = "Error"
-		$Result.CollectionMessage = Get-SanitizedInventoryMessage -Message $_.Exception.Message
+		$Result.CollectionMessage = Get-SanitizedErrorMessage -Message $_.Exception.Message
 	}
 
 	return $Result
@@ -789,7 +797,7 @@ function Get-LenovoDeviceHealthInventory {
 	}
 	catch {
 		$WarrantyCollectionStatus = "Error"
-		$CollectionMessages += "WarrantyInformation lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+		$CollectionMessages += "WarrantyInformation lookup failed: $(Get-SanitizedErrorMessage -Message $_.Exception.Message)"
 	}
 	try {
 		$WarrantyElements = @(Get-CimInstance -Namespace "root\Lenovo" -ClassName Lenovo_WarrantyElement -ErrorAction Stop)
@@ -802,7 +810,7 @@ function Get-LenovoDeviceHealthInventory {
 		if ($WarrantyCollectionStatus -eq "Success") {
 			$WarrantyCollectionStatus = "Partial"
 		}
-		$CollectionMessages += "WarrantyElement lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+		$CollectionMessages += "WarrantyElement lookup failed: $(Get-SanitizedErrorMessage -Message $_.Exception.Message)"
 	}
 	try {
 		$Battery = Get-CimInstance -Namespace "root\Lenovo" -ClassName Lenovo_Battery -ErrorAction Stop | Select-Object -First 1
@@ -811,7 +819,7 @@ function Get-LenovoDeviceHealthInventory {
 	}
 	catch {
 		$BatteryCollectionStatus = "Error"
-		$CollectionMessages += "Battery lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+		$CollectionMessages += "Battery lookup failed: $(Get-SanitizedErrorMessage -Message $_.Exception.Message)"
 	}
 	try {
 		$Odometer = Get-CimInstance -Namespace "root\Lenovo" -ClassName Lenovo_Odometer -ErrorAction Stop | Select-Object -First 1
@@ -820,7 +828,7 @@ function Get-LenovoDeviceHealthInventory {
 	}
 	catch {
 		$OdometerCollectionStatus = "Error"
-		$CollectionMessages += "Odometer lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+		$CollectionMessages += "Odometer lookup failed: $(Get-SanitizedErrorMessage -Message $_.Exception.Message)"
 	}
 
 	$PremierSupportElements = @($WarrantyElements | Where-Object { "$($_.Name)" -like "*Premier*" })
@@ -871,6 +879,7 @@ function Get-LenovoDeviceHealthInventory {
 		InventoryDate = $InventoryDate
 	}
 }
+#endregion lenovo functions
 #endregion functions
 
 #region script
@@ -1329,10 +1338,10 @@ if ($CollectLenovoDeviceHealthInventory -and ($ComputerManufacturer -like "*Leno
 #endregion LENOVODEVICEHEALTHINVENTORY
 
 #region LENOVODOCKINVENTORY
-if ($CollectLenovoDockInventory) {
-	$LenovoDockInventory = @()
-	$LenovoDockUsageInventory = @()
-	$LenovoDockStatusInventory = $null
+$LenovoDockInventory = @()
+$LenovoDockUsageInventory = @()
+$LenovoDockStatusInventory = $null
+if ($CollectLenovoDockInventory -and ($ComputerManufacturer -like "*Lenovo*")) {
 	$LenovoDockQueryResult = Get-LenovoDockDevice
 	$LenovoDockCache = Get-LenovoDockCache -Path $LenovoDockCachePath -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
 	$LenovoDockInventoryDate = (Get-Date).ToUniversalTime().ToString("o")
