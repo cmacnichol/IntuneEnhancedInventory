@@ -20,7 +20,7 @@ Author:      Jan Ketil Skanke
 Contributor: Sandy Zeng / Maurice Daly
 Contact:     @JankeSkanke
 Created:     2021-01-02
-Updated:     2026-06-26
+Updated:     2026-06-27
 
 Version history:
 0.9.0 - (2021 - 01 - 02) Script created
@@ -34,6 +34,7 @@ Version history:
 3.0.1 - (2022-15-09) Updated to support CloudPC (Different method to find AzureAD DeviceID for verification) and fixed output error from script (Thanks to @gwblok)
 3.5.0 - (2022-14-10) Azure Function updated - Requires version 1.2 Updated output logic to be more dynamic. Fixed a bug in the randomizer function and disabled inventory collection during provisioning day.
 3.6.0 - (2026-06-26) Added Lenovo Dock inventory collection with local cache, status, and usage logs.
+3.7.0 - (2026-06-27) Added Lenovo dock firmware normalization, optional monitor metadata, and Lenovo device health inventory.
 #>
 
 #region initialize
@@ -48,6 +49,7 @@ $AzureFunctionURL = ""
 $CollectAppInventory = $true
 $CollectDeviceInventory = $true
 $CollectLenovoDockInventory = $true
+$CollectLenovoDeviceHealthInventory = $true
 # $CollectCustomInventory = $true *SAMPLE*
 $DryRun = $false
 
@@ -57,6 +59,7 @@ $DeviceLogName = "DeviceInventory"
 $LenovoDockInventoryLogName = "LenovoDockInventory"
 $LenovoDockStatusLogName = "LenovoDockStatus"
 $LenovoDockUsageLogName = "LenovoDockUsage"
+$LenovoDeviceHealthLogName = "LenovoDeviceHealth"
 # $CustomLogName = "CustomInventory" *SAMPLE*
 $Date=(Get-Date)
 $LenovoDockCachePath = "C:\ProgramData\IntuneEnhancedInventory\LenovoDockInventory.json"
@@ -169,7 +172,7 @@ function Get-AzureADTenantID {
 	return $AzureADTenantID
 }
 # Function to get all Installed Application
-function Get-InstalledApplications() {
+function Get-InstalledApplication() {
 	param (
 		[string]$UserSid
 	)
@@ -200,29 +203,298 @@ function Get-InstalledApplications() {
 	}
 	Return $Apps
 }
+function Get-SanitizedInventoryMessage {
+	param (
+		[string]$Message
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Message)) {
+		return ""
+	}
+
+	return (($Message -replace "[\r\n]+", " ").Trim())
+}
+function ConvertTo-LenovoNullableBool {
+	param (
+		[object]$Value
+	)
+
+	if ($null -eq $Value) {
+		return $null
+	}
+	if ($Value -is [bool]) {
+		return [bool]$Value
+	}
+	$StringValue = "$Value".Trim()
+	if ($StringValue -match '^(True|False)$') {
+		return [System.Convert]::ToBoolean($StringValue)
+	}
+
+	return $null
+}
+function ConvertTo-LenovoNumber {
+	param (
+		[object]$Value
+	)
+
+	if ($null -eq $Value) {
+		return $null
+	}
+
+	$Match = [regex]::Match("$Value", '[-+]?\d+(\.\d+)?')
+	if (-not $Match.Success) {
+		return $null
+	}
+
+	return [double]$Match.Value
+}
+function ConvertTo-LenovoInteger {
+	param (
+		[object]$Value
+	)
+
+	$Number = ConvertTo-LenovoNumber -Value $Value
+	if ($null -eq $Number) {
+		return $null
+	}
+
+	return [int]$Number
+}
+function Get-LenovoFirmwareVersionNormalized {
+	param (
+		[string]$Version
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Version)) {
+		return ""
+	}
+
+	return (($Version.Trim() -replace '^[vV]\s*', '').Trim())
+}
+function Get-LenovoFirmwareUpdateAvailable {
+	param (
+		[string]$FWVersionNormalized,
+		[string]$AvailableFWVersionNormalized,
+		[object]$LatestFirmwareFlag
+	)
+
+	$LatestFirmwareFlagValue = ConvertTo-LenovoNullableBool -Value $LatestFirmwareFlag
+	if ($null -ne $LatestFirmwareFlagValue) {
+		return (-not $LatestFirmwareFlagValue)
+	}
+	if ([string]::IsNullOrWhiteSpace($AvailableFWVersionNormalized)) {
+		return $null
+	}
+	if ([string]::IsNullOrWhiteSpace($FWVersionNormalized)) {
+		return $null
+	}
+
+	return ($FWVersionNormalized -ne $AvailableFWVersionNormalized)
+}
+function Get-StringSHA256Hash {
+	param (
+		[string]$Value
+	)
+
+	if ([string]::IsNullOrWhiteSpace($Value)) {
+		return ""
+	}
+
+	$Sha256 = [System.Security.Cryptography.SHA256]::Create()
+	try {
+		$Bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+		return (($Sha256.ComputeHash($Bytes) | ForEach-Object { $_.ToString("x2") }) -join "")
+	}
+	finally {
+		$Sha256.Dispose()
+	}
+}
+function Get-LenovoJoinedPropertyValue {
+	param (
+		[array]$Items,
+		[string]$PropertyName
+	)
+
+	$Values = @($Items | ForEach-Object {
+		if ($null -ne $_.PSObject.Properties[$PropertyName]) {
+			"$($_.PSObject.Properties[$PropertyName].Value)"
+		}
+	} | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+
+	return ($Values -join ",")
+}
+function Test-LenovoDockObjectMatch {
+	param (
+		[object]$Dock,
+		[object]$RelatedObject
+	)
+
+	if (($null -eq $Dock) -or ($null -eq $RelatedObject)) {
+		return $false
+	}
+
+	$DockId = "$($Dock.DockId)"
+	$SerialNumber = "$($Dock.SerialNumber)"
+	$MACAddress = "$($Dock.MACAddress)"
+
+	if ((-not [string]::IsNullOrWhiteSpace($DockId)) -and ($DockId -eq "$($RelatedObject.DockId)")) {
+		return $true
+	}
+	if ((-not [string]::IsNullOrWhiteSpace($SerialNumber)) -and ($SerialNumber -eq "$($RelatedObject.SerialNumber)")) {
+		return $true
+	}
+	if ((-not [string]::IsNullOrWhiteSpace($MACAddress)) -and ($MACAddress -eq "$($RelatedObject.MACAddress)")) {
+		return $true
+	}
+
+	return $false
+}
+function Find-LenovoDockRelatedObject {
+	param (
+		[array]$RelatedObjects,
+		[object]$Dock
+	)
+
+	return @($RelatedObjects) | Where-Object { Test-LenovoDockObjectMatch -Dock $Dock -RelatedObject $_ } | Select-Object -First 1
+}
+function Get-LenovoDockRelatedMatch {
+	param (
+		[array]$RelatedObjects,
+		[object]$Dock
+	)
+
+	return @($RelatedObjects) | Where-Object { Test-LenovoDockObjectMatch -Dock $Dock -RelatedObject $_ }
+}
+function Get-LenovoDockFirmwareState {
+	param (
+		[object]$Dock,
+		[object]$DockInfo
+	)
+
+	$FWVersion = "$($Dock.FWVersion)"
+	if (($null -ne $DockInfo) -and (-not [string]::IsNullOrWhiteSpace("$($DockInfo.FWVersion)"))) {
+		$FWVersion = "$($DockInfo.FWVersion)"
+	}
+
+	$AvailableFWVersion = "$($Dock.AvailableFWVersion)"
+	if (($null -ne $DockInfo) -and (-not [string]::IsNullOrWhiteSpace("$($DockInfo.AvailableFWVersion)"))) {
+		$AvailableFWVersion = "$($DockInfo.AvailableFWVersion)"
+	}
+
+	$FWVersionNormalized = Get-LenovoFirmwareVersionNormalized -Version $FWVersion
+	$AvailableFWVersionNormalized = Get-LenovoFirmwareVersionNormalized -Version $AvailableFWVersion
+	$LatestFirmwareFlag = if ($null -ne $DockInfo) { ConvertTo-LenovoNullableBool -Value $DockInfo.LatestFirmwareFlag } else { $null }
+	$FirmwareUpdateAvailable = Get-LenovoFirmwareUpdateAvailable -FWVersionNormalized $FWVersionNormalized -AvailableFWVersionNormalized $AvailableFWVersionNormalized -LatestFirmwareFlag $LatestFirmwareFlag
+
+	return [PSCustomObject]@{
+		FWVersion = "$FWVersion"
+		AvailableFWVersion = "$AvailableFWVersion"
+		FWVersionNormalized = "$FWVersionNormalized"
+		AvailableFWVersionNormalized = "$AvailableFWVersionNormalized"
+		LatestFirmwareFlag = $LatestFirmwareFlag
+		FirmwareUpdateAvailable = $FirmwareUpdateAvailable
+		FirmwareLastUpdateOn = if ($null -ne $DockInfo) { "$($DockInfo.LastUpdateOn)" } else { "" }
+		FirmwareInventoryDate = if ($null -ne $DockInfo) { "$($DockInfo.Date)" } else { "" }
+	}
+}
+function Get-LenovoDockMonitorSummary {
+	param (
+		[array]$DisplayDevices
+	)
+
+	$Displays = @($DisplayDevices)
+	$EDIDHashes = @($Displays | ForEach-Object { Get-StringSHA256Hash -Value "$($_.MonitorEDID)" } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+
+	return [PSCustomObject]@{
+		MonitorConnected = ($Displays.Count -gt 0)
+		MonitorCount = $Displays.Count
+		MonitorManufacturer = Get-LenovoJoinedPropertyValue -Items $Displays -PropertyName "MonitorMFGName"
+		MonitorModel = Get-LenovoJoinedPropertyValue -Items $Displays -PropertyName "MonitorModelName"
+		MonitorDeviceID = Get-LenovoJoinedPropertyValue -Items $Displays -PropertyName "DeviceID"
+		MonitorEDIDHash = ($EDIDHashes -join ",")
+	}
+}
 function Get-LenovoDockDevice {
 	$Result = [PSCustomObject]@{
 		Docks = @()
+		DockManagerEvents = @()
 		CollectionStatus = "Success"
 		CollectionMessage = ""
 	}
 
 	try {
 		$Docks = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -Query "SELECT * FROM DockDevice" -ErrorAction Stop)
-		$Result.Docks = $Docks
 		if ($Docks.Count -eq 0) {
 			$Result.CollectionStatus = "NoDockConnected"
 			$Result.CollectionMessage = "No Lenovo dock returned by DockDevice."
 		}
+		else {
+			$DockInfos = @()
+			$DisplayDevices = @()
+			$OptionalMessages = @()
+
+			try {
+				$DockInfos = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -ClassName DockInfo -ErrorAction Stop)
+			}
+			catch {
+				$OptionalMessages += "DockInfo lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+			}
+			try {
+				$DisplayDevices = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -ClassName DockDeviceDisplayPort -ErrorAction Stop)
+			}
+			catch {
+				$OptionalMessages += "Dock display lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+			}
+			try {
+				$Result.DockManagerEvents = @(Get-CimInstance -Namespace "root\Lenovo\Dock_Manager" -ClassName DockManager -ErrorAction Stop)
+			}
+			catch {
+				$OptionalMessages += "DockManager event lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+			}
+
+			if ($OptionalMessages.Count -gt 0) {
+				$Result.CollectionMessage = ($OptionalMessages -join " ")
+			}
+
+			$Result.Docks = @($Docks | ForEach-Object {
+				$Dock = $_
+				$DockInfo = Find-LenovoDockRelatedObject -RelatedObjects $DockInfos -Dock $Dock
+				$DockDisplayDevices = @(Get-LenovoDockRelatedMatch -RelatedObjects $DisplayDevices -Dock $Dock)
+				$FirmwareState = Get-LenovoDockFirmwareState -Dock $Dock -DockInfo $DockInfo
+				$MonitorSummary = Get-LenovoDockMonitorSummary -DisplayDevices $DockDisplayDevices
+
+				[PSCustomObject]@{
+					DockId = "$($Dock.DockId)"
+					SerialNumber = "$($Dock.SerialNumber)"
+					MACAddress = "$($Dock.MACAddress)"
+					MachineType = "$($Dock.MachineType)"
+					InstanceId = "$($Dock.InstanceId)"
+					FWVersion = "$($FirmwareState.FWVersion)"
+					AvailableFWVersion = "$($FirmwareState.AvailableFWVersion)"
+					FWVersionNormalized = "$($FirmwareState.FWVersionNormalized)"
+					AvailableFWVersionNormalized = "$($FirmwareState.AvailableFWVersionNormalized)"
+					LatestFirmwareFlag = $FirmwareState.LatestFirmwareFlag
+					FirmwareUpdateAvailable = $FirmwareState.FirmwareUpdateAvailable
+					FirmwareLastUpdateOn = "$($FirmwareState.FirmwareLastUpdateOn)"
+					FirmwareInventoryDate = "$($FirmwareState.FirmwareInventoryDate)"
+					MonitorConnected = [bool]$MonitorSummary.MonitorConnected
+					MonitorCount = [int]$MonitorSummary.MonitorCount
+					MonitorManufacturer = "$($MonitorSummary.MonitorManufacturer)"
+					MonitorModel = "$($MonitorSummary.MonitorModel)"
+					MonitorDeviceID = "$($MonitorSummary.MonitorDeviceID)"
+					MonitorEDIDHash = "$($MonitorSummary.MonitorEDIDHash)"
+				}
+			})
+		}
 	}
 	catch {
 		$Result.CollectionStatus = "Error"
-		$Result.CollectionMessage = ($_.Exception.Message -replace "[\r\n]+", " ").Trim()
+		$Result.CollectionMessage = Get-SanitizedInventoryMessage -Message $_.Exception.Message
 	}
 
 	return $Result
 }
-function New-LenovoDockCache {
+function Initialize-LenovoDockCache {
 	param (
 		[string]$AzureADDeviceID,
 		[string]$ComputerName,
@@ -255,13 +527,18 @@ function Get-LenovoDockCache {
 				$Cache | Add-Member -MemberType NoteProperty -Name "KnownDocks" -Value @() -Force
 			}
 			$Cache.KnownDocks = @($Cache.KnownDocks)
+			foreach ($KnownDock in @($Cache.KnownDocks)) {
+				if ($null -ne $KnownDock.PSObject.Properties["ProcessId"]) {
+					$KnownDock.PSObject.Properties.Remove("ProcessId")
+				}
+			}
 		}
 		catch {
-			$Cache = New-LenovoDockCache -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+			$Cache = Initialize-LenovoDockCache -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
 		}
 	}
 	else {
-		$Cache = New-LenovoDockCache -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+		$Cache = Initialize-LenovoDockCache -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
 	}
 
 	$Cache.AzureADDeviceID = "$AzureADDeviceID"
@@ -314,7 +591,7 @@ function Find-LenovoCachedDock {
 
 	return $null
 }
-function Update-LenovoDockCache {
+function Sync-LenovoDockCache {
 	param (
 		[object]$Cache,
 		[array]$ConnectedDocks,
@@ -343,13 +620,21 @@ function Update-LenovoDockCache {
 				MachineType = "$($Dock.MachineType)"
 				FWVersion = "$($Dock.FWVersion)"
 				AvailableFWVersion = "$($Dock.AvailableFWVersion)"
-				ProcessId = "$($Dock.ProcessId)"
+				FWVersionNormalized = "$($Dock.FWVersionNormalized)"
+				AvailableFWVersionNormalized = "$($Dock.AvailableFWVersionNormalized)"
+				LatestFirmwareFlag = $Dock.LatestFirmwareFlag
+				FirmwareUpdateAvailable = $Dock.FirmwareUpdateAvailable
+				FirmwareLastUpdateOn = "$($Dock.FirmwareLastUpdateOn)"
+				FirmwareInventoryDate = "$($Dock.FirmwareInventoryDate)"
 				FirstSeen = $Now
 				LastSeen = $Now
 				SeenCount = 0
 				IsPrimaryDock = $false
 			}
 			$KnownDocks += $CachedDock
+		}
+		if ($null -ne $CachedDock.PSObject.Properties["ProcessId"]) {
+			$CachedDock.PSObject.Properties.Remove("ProcessId")
 		}
 
 		$CachedDock.DockId = "$($Dock.DockId)"
@@ -358,7 +643,12 @@ function Update-LenovoDockCache {
 		$CachedDock.MachineType = "$($Dock.MachineType)"
 		$CachedDock.FWVersion = "$($Dock.FWVersion)"
 		$CachedDock.AvailableFWVersion = "$($Dock.AvailableFWVersion)"
-		$CachedDock.ProcessId = "$($Dock.ProcessId)"
+		$CachedDock.FWVersionNormalized = "$($Dock.FWVersionNormalized)"
+		$CachedDock.AvailableFWVersionNormalized = "$($Dock.AvailableFWVersionNormalized)"
+		$CachedDock.LatestFirmwareFlag = $Dock.LatestFirmwareFlag
+		$CachedDock.FirmwareUpdateAvailable = $Dock.FirmwareUpdateAvailable
+		$CachedDock.FirmwareLastUpdateOn = "$($Dock.FirmwareLastUpdateOn)"
+		$CachedDock.FirmwareInventoryDate = "$($Dock.FirmwareInventoryDate)"
 		$CachedDock.LastSeen = $Now
 		$CachedDock.SeenCount = [int]$CachedDock.SeenCount + 1
 
@@ -433,6 +723,152 @@ function Update-LenovoDockCache {
 		UsageEvents = @($UsageEvents)
 		PrimaryDock = $NewPrimaryDock
 		InventoryDate = $Now
+	}
+}
+function Get-LenovoLatestDateString {
+	param (
+		[array]$Items,
+		[string]$PropertyName
+	)
+
+	$DateItems = @($Items | ForEach-Object {
+		$RawValue = ""
+		if ($null -ne $_.PSObject.Properties[$PropertyName]) {
+			$RawValue = "$($_.PSObject.Properties[$PropertyName].Value)"
+		}
+		if (-not [string]::IsNullOrWhiteSpace($RawValue)) {
+			$ParsedDate = [datetime]::MinValue
+			if ([datetime]::TryParse($RawValue, [ref]$ParsedDate)) {
+				[PSCustomObject]@{
+					RawValue = $RawValue
+					ParsedDate = $ParsedDate
+				}
+			}
+		}
+	})
+
+	return "$(($DateItems | Sort-Object ParsedDate -Descending | Select-Object -First 1).RawValue)"
+}
+function Get-LenovoWarrantyEntitlementSummary {
+	param (
+		[array]$WarrantyElements
+	)
+
+	$Entitlements = @($WarrantyElements | ForEach-Object {
+		$Parts = @("$($_.ID)", "$($_.Name)", "$($_.Type)", "$($_.End)") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+		($Parts -join "|")
+	} | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+
+	return ($Entitlements -join ";")
+}
+function Get-LenovoDeviceHealthInventory {
+	param (
+		[string]$AzureADDeviceID,
+		[string]$ComputerName,
+		[string]$ManagedDeviceName,
+		[string]$ManagedDeviceID
+	)
+
+	$InventoryDate = (Get-Date).ToUniversalTime().ToString("o")
+	$CollectionMessages = @()
+	$LenovoProviderAvailable = $false
+
+	$WarrantyCollectionStatus = "NotCollected"
+	$BatteryCollectionStatus = "NotCollected"
+	$OdometerCollectionStatus = "NotCollected"
+
+	$WarrantyInformation = $null
+	$WarrantyElements = @()
+	$Battery = $null
+	$Odometer = $null
+
+	try {
+		$WarrantyInformation = Get-CimInstance -Namespace "root\Lenovo" -ClassName Lenovo_WarrantyInformation -ErrorAction Stop | Select-Object -First 1
+		$WarrantyCollectionStatus = if ($null -ne $WarrantyInformation) { "Success" } else { "NoData" }
+		$LenovoProviderAvailable = $true
+	}
+	catch {
+		$WarrantyCollectionStatus = "Error"
+		$CollectionMessages += "WarrantyInformation lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+	}
+	try {
+		$WarrantyElements = @(Get-CimInstance -Namespace "root\Lenovo" -ClassName Lenovo_WarrantyElement -ErrorAction Stop)
+		if (($WarrantyCollectionStatus -eq "Success") -and ($WarrantyElements.Count -eq 0)) {
+			$WarrantyCollectionStatus = "Partial"
+		}
+		$LenovoProviderAvailable = $true
+	}
+	catch {
+		if ($WarrantyCollectionStatus -eq "Success") {
+			$WarrantyCollectionStatus = "Partial"
+		}
+		$CollectionMessages += "WarrantyElement lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+	}
+	try {
+		$Battery = Get-CimInstance -Namespace "root\Lenovo" -ClassName Lenovo_Battery -ErrorAction Stop | Select-Object -First 1
+		$BatteryCollectionStatus = if ($null -ne $Battery) { "Success" } else { "NoData" }
+		$LenovoProviderAvailable = $true
+	}
+	catch {
+		$BatteryCollectionStatus = "Error"
+		$CollectionMessages += "Battery lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+	}
+	try {
+		$Odometer = Get-CimInstance -Namespace "root\Lenovo" -ClassName Lenovo_Odometer -ErrorAction Stop | Select-Object -First 1
+		$OdometerCollectionStatus = if ($null -ne $Odometer) { "Success" } else { "NoData" }
+		$LenovoProviderAvailable = $true
+	}
+	catch {
+		$OdometerCollectionStatus = "Error"
+		$CollectionMessages += "Odometer lookup failed: $(Get-SanitizedInventoryMessage -Message $_.Exception.Message)"
+	}
+
+	$PremierSupportElements = @($WarrantyElements | Where-Object { "$($_.Name)" -like "*Premier*" })
+	$BatteryWarrantyElements = @($WarrantyElements | Where-Object { "$($_.Name)" -like "*Battery*" })
+	$BatteryDesignCapacity = ConvertTo-LenovoNumber -Value $Battery.DesignCapacity
+	$BatteryFullChargeCapacity = ConvertTo-LenovoNumber -Value $Battery.FullChargeCapacity
+	$BatteryCapacityPercent = $null
+	if (($null -ne $BatteryDesignCapacity) -and ($BatteryDesignCapacity -gt 0) -and ($null -ne $BatteryFullChargeCapacity)) {
+		$BatteryCapacityPercent = [Math]::Round(($BatteryFullChargeCapacity / $BatteryDesignCapacity) * 100, 2)
+	}
+
+	return [PSCustomObject]@{
+		AzureADDeviceID = "$AzureADDeviceID"
+		ComputerName = "$ComputerName"
+		ManagedDeviceName = "$ManagedDeviceName"
+		ManagedDeviceID = "$ManagedDeviceID"
+		LenovoProviderAvailable = [bool]$LenovoProviderAvailable
+		WarrantyCollectionStatus = "$WarrantyCollectionStatus"
+		BatteryCollectionStatus = "$BatteryCollectionStatus"
+		OdometerCollectionStatus = "$OdometerCollectionStatus"
+		CollectionMessage = "$($CollectionMessages -join ' ')"
+		WarrantySerialNumber = "$($WarrantyInformation.SerialNumber)"
+		WarrantyProduct = "$($WarrantyInformation.Product)"
+		WarrantyStartDate = "$($WarrantyInformation.StartDate)"
+		WarrantyEndDate = "$($WarrantyInformation.EndDate)"
+		WarrantyLastUpdateTime = "$($WarrantyInformation.LastUpdateTime)"
+		WarrantyEntitlementCount = @($WarrantyElements).Count
+		WarrantyEntitlements = "$(Get-LenovoWarrantyEntitlementSummary -WarrantyElements $WarrantyElements)"
+		PremierSupportEndDate = "$(Get-LenovoLatestDateString -Items $PremierSupportElements -PropertyName 'End')"
+		BatteryWarrantyEndDate = "$(Get-LenovoLatestDateString -Items $BatteryWarrantyElements -PropertyName 'End')"
+		BatteryHealth = "$($Battery.BatteryHealth)"
+		BatteryCondition = "$($Battery.Condition)"
+		BatteryCycleCount = ConvertTo-LenovoInteger -Value $Battery.CycleCount
+		BatteryDesignCapacity = "$($Battery.DesignCapacity)"
+		BatteryFullChargeCapacity = "$($Battery.FullChargeCapacity)"
+		BatteryCapacityPercent = $BatteryCapacityPercent
+		BatteryFirstUseDate = "$($Battery.FirstUseDate)"
+		BatteryManufactureDate = "$($Battery.ManufactureDate)"
+		BatteryManufacturer = "$($Battery.Manufacturer)"
+		BatteryFRUPartNumber = "$($Battery.FRUPartNumber)"
+		BatteryFirmwareVersion = "$($Battery.FirmwareVersion)"
+		OdometerSystemID = "$($Odometer.SystemID)"
+		OdometerBatteryCycles = "$($Odometer.Battery_cycles)"
+		OdometerCPUUptime = ConvertTo-LenovoInteger -Value $Odometer.CPU_Uptime
+		OdometerThermalEvents = ConvertTo-LenovoInteger -Value $Odometer.Thermal_events
+		OdometerShockEvents = ConvertTo-LenovoInteger -Value $Odometer.Shock_events
+		OdometerSSDReadWriteCount = "$($Odometer.SSD_Read_Write_count)"
+		InventoryDate = $InventoryDate
 	}
 }
 #endregion functions
@@ -851,7 +1287,7 @@ if ($CollectAppInventory) {
 	}
 
 	#Get Apps for system and current user
-	$MyApps = Get-InstalledApplications -UserSid $UserSid
+	$MyApps = Get-InstalledApplication -UserSid $UserSid
 	$UniqueApps = ($MyApps | Group-Object Displayname | Where-Object { $_.Count -eq 1 }).Group
 	$DuplicatedApps = ($MyApps | Group-Object Displayname | Where-Object { $_.Count -gt 1 }).Group
 	$NewestDuplicateApp = ($DuplicatedApps | Group-Object DisplayName) | ForEach-Object {
@@ -885,6 +1321,13 @@ if ($CollectAppInventory) {
 }
 #endregion APPINVENTORY
 
+#region LENOVODEVICEHEALTHINVENTORY
+$LenovoDeviceHealthInventory = $null
+if ($CollectLenovoDeviceHealthInventory -and ($ComputerManufacturer -like "*Lenovo*")) {
+	$LenovoDeviceHealthInventory = Get-LenovoDeviceHealthInventory -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+}
+#endregion LENOVODEVICEHEALTHINVENTORY
+
 #region LENOVODOCKINVENTORY
 if ($CollectLenovoDockInventory) {
 	$LenovoDockInventory = @()
@@ -896,7 +1339,7 @@ if ($CollectLenovoDockInventory) {
 	$ConnectedLenovoDocks = @($LenovoDockQueryResult.Docks)
 
 	if ($LenovoDockQueryResult.CollectionStatus -eq "Success") {
-		$LenovoDockCacheUpdate = Update-LenovoDockCache -Cache $LenovoDockCache -ConnectedDocks $ConnectedLenovoDocks -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
+		$LenovoDockCacheUpdate = Sync-LenovoDockCache -Cache $LenovoDockCache -ConnectedDocks $ConnectedLenovoDocks -AzureADDeviceID $AzureADDeviceID -ComputerName $ComputerName -ManagedDeviceName $ManagedDeviceName -ManagedDeviceID $ManagedDeviceID
 		$LenovoDockCache = $LenovoDockCacheUpdate.Cache
 		$LenovoDockUsageInventory = @($LenovoDockCacheUpdate.UsageEvents)
 		$LenovoDockInventoryDate = $LenovoDockCacheUpdate.InventoryDate
@@ -922,12 +1365,46 @@ if ($CollectLenovoDockInventory) {
 				MachineType = "$($LenovoDock.MachineType)"
 				FWVersion = "$($LenovoDock.FWVersion)"
 				AvailableFWVersion = "$($LenovoDock.AvailableFWVersion)"
-				ProcessId = "$($LenovoDock.ProcessId)"
+				FWVersionNormalized = "$($LenovoDock.FWVersionNormalized)"
+				AvailableFWVersionNormalized = "$($LenovoDock.AvailableFWVersionNormalized)"
+				LatestFirmwareFlag = $LenovoDock.LatestFirmwareFlag
+				FirmwareUpdateAvailable = $LenovoDock.FirmwareUpdateAvailable
+				FirmwareLastUpdateOn = "$($LenovoDock.FirmwareLastUpdateOn)"
+				FirmwareInventoryDate = "$($LenovoDock.FirmwareInventoryDate)"
+				MonitorConnected = [bool]$LenovoDock.MonitorConnected
+				MonitorCount = [int]$LenovoDock.MonitorCount
+				MonitorManufacturer = "$($LenovoDock.MonitorManufacturer)"
+				MonitorModel = "$($LenovoDock.MonitorModel)"
+				MonitorDeviceID = "$($LenovoDock.MonitorDeviceID)"
+				MonitorEDIDHash = "$($LenovoDock.MonitorEDIDHash)"
 				DockConnected = $true
 				IsPrimaryDock = [bool]$CachedLenovoDock.IsPrimaryDock
 				FirstSeen = "$($CachedLenovoDock.FirstSeen)"
 				LastSeen = "$($CachedLenovoDock.LastSeen)"
 				SeenCount = [int]$CachedLenovoDock.SeenCount
+				InventoryDate = $LenovoDockInventoryDate
+			}
+		}
+		foreach ($LenovoDockManagerEvent in @($LenovoDockQueryResult.DockManagerEvents)) {
+			$LenovoDockUsageInventory += [PSCustomObject]@{
+				AzureADDeviceID = "$AzureADDeviceID"
+				ComputerName = "$ComputerName"
+				ManagedDeviceName = "$ManagedDeviceName"
+				ManagedDeviceID = "$ManagedDeviceID"
+				DockId = "$($LenovoDockManagerEvent.DockId)"
+				SerialNumber = "$($LenovoDockManagerEvent.SerialNumber)"
+				MACAddress = "$($LenovoDockManagerEvent.MACAddress)"
+				EventType = "FirmwareUpdateStatus"
+				PreviousPrimaryDockId = ""
+				IsPrimaryDock = $false
+				FirstSeen = ""
+				LastSeen = ""
+				SeenCount = 0
+				FWUpdateDate = "$($LenovoDockManagerEvent.FWUpdateDate)"
+				UpdateStatus = "$($LenovoDockManagerEvent.UpdateStatus)"
+				ErrorCode = "$($LenovoDockManagerEvent.ErrorCode)"
+				OldVersion = "$($LenovoDockManagerEvent.OldVersion)"
+				NewVersion = "$($LenovoDockManagerEvent.NewVersion)"
 				InventoryDate = $LenovoDockInventoryDate
 			}
 		}
@@ -1002,6 +1479,9 @@ if ($CollectAppInventory) {
 }
 if ($CollectDeviceInventory) {
 	$LogPayLoad | Add-Member -NotePropertyMembers @{$DeviceLogName = $DeviceInventory}
+}
+if ($CollectLenovoDeviceHealthInventory -and ($null -ne $LenovoDeviceHealthInventory)) {
+	$LogPayLoad | Add-Member -NotePropertyMembers @{$LenovoDeviceHealthLogName = $LenovoDeviceHealthInventory}
 }
 if ($CollectLenovoDockInventory) {
 	if (@($LenovoDockInventory).Count -gt 0) {

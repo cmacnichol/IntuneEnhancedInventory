@@ -120,7 +120,7 @@
             "label": "Firmware Version",
             "type": 2,
             "isRequired": true,
-            "query": "LenovoDockInventory_CL\r\n| where isnotempty(FWVersion_s)\r\n| distinct FWVersion_s\r\n| sort by FWVersion_s asc",
+            "query": "LenovoDockInventory_CL\r\n| extend FirmwareVersion = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s))\r\n| where isnotempty(FirmwareVersion)\r\n| distinct FirmwareVersion\r\n| sort by FirmwareVersion asc",
             "value": "*",
             "typeSettings": {
               "additionalResourceOptions": [
@@ -169,7 +169,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "let DeviceContext = union isfuzzy=true\r\n    (DeviceInventory_CL\r\n    | summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\r\n    | project ManagedDeviceID_g, Manufacturer_s, DeviceModel = Model_s, SystemSKU_s, OSName_s, OSBuild_s),\r\n    (LenovoDockInventory_CL\r\n    | take 0\r\n    | project ManagedDeviceID_g, Manufacturer_s = \"\", DeviceModel = \"\", SystemSKU_s = \"\", OSName_s = \"\", OSBuild_s = \"\");\r\nLenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or FWVersion_s == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| join kind=leftouter DeviceContext on ManagedDeviceID_g\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, ManagedDeviceID_g, Manufacturer_s, DeviceModel, SystemSKU_s, OSName_s, OSBuild_s, DockId_s, SerialNumber_s, MACAddress_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, DockConnected_b, IsPrimaryDock_b, FirstSeen = todatetime(FirstSeen_s), LastSeen = todatetime(LastSeen_s), SeenCount = toint(SeenCount_d), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc, IsPrimaryDock_b desc, LastSeen desc",
+        "query": "let DeviceContext = union isfuzzy=true\r\n    (DeviceInventory_CL\r\n    | summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g\r\n    | project ManagedDeviceID_g, Manufacturer_s, DeviceModel = Model_s, SystemSKU_s, OSName_s, OSBuild_s),\r\n    (LenovoDockInventory_CL\r\n    | take 0\r\n    | project ManagedDeviceID_g, Manufacturer_s = \"\", DeviceModel = \"\", SystemSKU_s = \"\", OSName_s = \"\", OSBuild_s = \"\");\r\nLenovoDockInventory_CL\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s))\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or CurrentFirmware == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s)), AvailableFirmware = tostring(column_ifexists(\"AvailableFWVersionNormalized_s\", AvailableFWVersion_s)), FirmwareUpdateAvailable = tobool(column_ifexists(\"FirmwareUpdateAvailable_b\", \"\")), MonitorConnected = tobool(column_ifexists(\"MonitorConnected_b\", false)), MonitorCount = toint(column_ifexists(\"MonitorCount_d\", 0)), MonitorManufacturer = tostring(column_ifexists(\"MonitorManufacturer_s\", \"\")), MonitorModel = tostring(column_ifexists(\"MonitorModel_s\", \"\"))\r\n| join kind=leftouter DeviceContext on ManagedDeviceID_g\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, ManagedDeviceID_g, Manufacturer_s, DeviceModel, SystemSKU_s, OSName_s, OSBuild_s, DockId_s, SerialNumber_s, MACAddress_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, CurrentFirmware, AvailableFirmware, FirmwareUpdateAvailable, MonitorConnected, MonitorCount, MonitorManufacturer, MonitorModel, DockConnected_b, IsPrimaryDock_b, FirstSeen = todatetime(FirstSeen_s), LastSeen = todatetime(LastSeen_s), SeenCount = toint(SeenCount_d), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc, IsPrimaryDock_b desc, LastSeen desc",
         "size": 0,
         "showAnalytics": true,
         "title": "Latest Dock Inventory",
@@ -224,6 +224,22 @@
             {
               "columnId": "AvailableFWVersion_s",
               "label": "Available Firmware"
+            },
+            {
+              "columnId": "CurrentFirmware",
+              "label": "Normalized Firmware"
+            },
+            {
+              "columnId": "FirmwareUpdateAvailable",
+              "label": "Firmware Update Available"
+            },
+            {
+              "columnId": "MonitorCount",
+              "label": "Monitor Count"
+            },
+            {
+              "columnId": "MonitorModel",
+              "label": "Monitor Model"
             }
           ]
         }
@@ -241,7 +257,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or FWVersion_s == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| summarize Docks = dcount(SerialNumber_s), Devices = dcount(ManagedDeviceID_g) by FWVersion_s\r\n| order by Docks desc",
+        "query": "LenovoDockInventory_CL\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s))\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or CurrentFirmware == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s))\r\n| summarize Docks = dcount(SerialNumber_s), Devices = dcount(ManagedDeviceID_g) by CurrentFirmware\r\n| order by Docks desc",
         "size": 3,
         "title": "Firmware Version Distribution",
         "timeContext": {
@@ -262,7 +278,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or FWVersion_s == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| summarize Docks = dcount(SerialNumber_s), Devices = dcount(ManagedDeviceID_g) by MachineType_s, FWVersion_s\r\n| order by MachineType_s asc, FWVersion_s asc",
+        "query": "LenovoDockInventory_CL\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s))\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| where \"{FirmwareVersion:escape}\" == \"*\" or CurrentFirmware == \"{FirmwareVersion:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s))\r\n| summarize Docks = dcount(SerialNumber_s), Devices = dcount(ManagedDeviceID_g) by MachineType_s, CurrentFirmware\r\n| order by MachineType_s asc, CurrentFirmware asc",
         "size": 0,
         "title": "Dock Model and Firmware Matrix",
         "timeContext": {
@@ -281,7 +297,7 @@
               "label": "Dock Model"
             },
             {
-              "columnId": "FWVersion_s",
+              "columnId": "CurrentFirmware",
               "label": "Firmware"
             }
           ]
@@ -297,7 +313,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| where isnotempty(AvailableFWVersion_s) and AvailableFWVersion_s != FWVersion_s\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, DockId_s, SerialNumber_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, LastSeen = todatetime(LastSeen_s), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc",
+        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| where \"{DockModel:escape}\" == \"*\" or MachineType_s == \"{DockModel:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s)), AvailableFirmware = tostring(column_ifexists(\"AvailableFWVersionNormalized_s\", AvailableFWVersion_s)), FirmwareUpdateAvailable = tobool(column_ifexists(\"FirmwareUpdateAvailable_b\", \"\"))\r\n| where FirmwareUpdateAvailable == true or (isnull(FirmwareUpdateAvailable) and isnotempty(AvailableFirmware) and AvailableFirmware != CurrentFirmware)\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, DockId_s, SerialNumber_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, CurrentFirmware, AvailableFirmware, FirmwareUpdateAvailable, LastSeen = todatetime(LastSeen_s), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc",
         "size": 0,
         "showAnalytics": true,
         "title": "Docks With Available Firmware Updates",
@@ -346,7 +362,7 @@
       "type": 3,
       "content": {
         "version": "KqlItem/1.0",
-        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, DockId_s, SerialNumber_s, MACAddress_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, IsPrimaryDock_b, FirstSeen = todatetime(FirstSeen_s), LastSeen = todatetime(LastSeen_s), SeenCount = toint(SeenCount_d), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc, IsPrimaryDock_b desc, LastSeen desc",
+        "query": "LenovoDockInventory_CL\r\n| where isempty(\"{ComputerName:escape}\") or ComputerName_s contains \"{ComputerName:escape}\"\r\n| where isempty(\"{DockSerial:escape}\") or SerialNumber_s contains \"{DockSerial:escape}\"\r\n| summarize arg_max(TimeGenerated, *) by ManagedDeviceID_g, SerialNumber_s, DockId_s\r\n| extend CurrentFirmware = tostring(column_ifexists(\"FWVersionNormalized_s\", FWVersion_s)), AvailableFirmware = tostring(column_ifexists(\"AvailableFWVersionNormalized_s\", AvailableFWVersion_s)), FirmwareUpdateAvailable = tobool(column_ifexists(\"FirmwareUpdateAvailable_b\", \"\")), MonitorConnected = tobool(column_ifexists(\"MonitorConnected_b\", false)), MonitorCount = toint(column_ifexists(\"MonitorCount_d\", 0)), MonitorManufacturer = tostring(column_ifexists(\"MonitorManufacturer_s\", \"\")), MonitorModel = tostring(column_ifexists(\"MonitorModel_s\", \"\"))\r\n| project LastReport = TimeGenerated, ComputerName_s, ManagedDeviceName_s, DockId_s, SerialNumber_s, MACAddress_s, MachineType_s, FWVersion_s, AvailableFWVersion_s, CurrentFirmware, AvailableFirmware, FirmwareUpdateAvailable, MonitorConnected, MonitorCount, MonitorManufacturer, MonitorModel, IsPrimaryDock_b, FirstSeen = todatetime(FirstSeen_s), LastSeen = todatetime(LastSeen_s), SeenCount = toint(SeenCount_d), InventoryDate = todatetime(InventoryDate_s)\r\n| order by ComputerName_s asc, IsPrimaryDock_b desc, LastSeen desc",
         "size": 0,
         "showAnalytics": true,
         "title": "Connected Dock Details For Matching Computers",
