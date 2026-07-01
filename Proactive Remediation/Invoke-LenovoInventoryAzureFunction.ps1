@@ -20,9 +20,10 @@ Author:      Jan Ketil Skanke
 Contributor: Sandy Zeng / Maurice Daly
 Contact:     @JankeSkanke
 Created:     2021-01-02
-Updated:     2026-06-27
+Updated:     2026-07-01
 
 Version history:
+1.0.1 - (2026-07-01) Fixed Lenovo dock firmware update detection to prefer normalized firmware version comparison over the raw LatestFirmwareFlag.
 1.0.0 - (2026-06-29) Created dedicated Lenovo inventory script.
 #>
 
@@ -234,18 +235,16 @@ function Get-LenovoFirmwareUpdateAvailable {
 		[object]$LatestFirmwareFlag
 	)
 
+	if ((-not [string]::IsNullOrWhiteSpace($FWVersionNormalized)) -and (-not [string]::IsNullOrWhiteSpace($AvailableFWVersionNormalized))) {
+		return ($FWVersionNormalized -ne $AvailableFWVersionNormalized)
+	}
+
 	$LatestFirmwareFlagValue = ConvertTo-LenovoNullableBool -Value $LatestFirmwareFlag
 	if ($null -ne $LatestFirmwareFlagValue) {
 		return (-not $LatestFirmwareFlagValue)
 	}
-	if ([string]::IsNullOrWhiteSpace($AvailableFWVersionNormalized)) {
-		return $null
-	}
-	if ([string]::IsNullOrWhiteSpace($FWVersionNormalized)) {
-		return $null
-	}
 
-	return ($FWVersionNormalized -ne $AvailableFWVersionNormalized)
+	return $null
 }
 function Get-StringSHA256Hash {
 	param (
