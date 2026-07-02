@@ -6,8 +6,22 @@
 * Updated the Azure Function extension bundle range in `host.json` from deprecated 2.x to supported 4.x (`[4.0.0, 5.0.0)`).
 * Rebuilt `Packages/LogCollectorAPI.zip` so the deployment package includes the updated Azure Function `host.json`.
 * Moved Lenovo-specific README content under a new `Custom Inventory Script` section so the repository overview stays focused on the Azure Function inventory flow.
+* Hardened the Log Collector API v1.4 reliability path with per-log Log Analytics error handling, structured error responses, aggregate ingestion status, stronger empty payload detection, alternate payload access, device ID redaction, and an `/api/health` endpoint.
+* Documented deferred Log Collector API follow-ups for endpoint authentication, shared helper refactoring, and future DCR ingestion.
+* Updated Azure Function profile guidance, README version requirements, and post-deployment health check setup instructions.
+* Rebuilt `Packages/LogCollectorAPI.zip` so the deployment package includes the Log Collector API v1.4 reliability updates, profile guidance, and `/api/health` endpoint.
 
 ## Changelog for Log Collector API Azure Function
+
+### 1.4
+* Modernized managed identity Graph authentication with `IDENTITY_ENDPOINT`, token caching, retry handling, and legacy MSI fallback.
+* Added request validation for tenant/device GUIDs and non-empty `LogPayloads`.
+* Hardened log name control with exact allowed-name matching and improved allowed-log app setting parsing.
+* Added Graph duplicate count telemetry, `Retry-After` handling, token cache invalidation on Graph `401`, and invariant token expiry parsing.
+* Added structured telemetry, explicit JSON serialization depth, and redacted device IDs in logs and telemetry.
+* Added per-log Log Analytics ingestion error handling with partial failure reporting via HTTP `207 Multi-Status`.
+* Added structured error response bodies for validation, tenant/device, and Graph failure paths.
+* Added `GET /api/health` for shallow configuration and managed identity availability checks.
 
 ### 1.2 
 * Requires Proactive Remeditaion Script version 3.5

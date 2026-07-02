@@ -19,7 +19,7 @@ There is no formal build pipeline in the repo. Use targeted validation:
 Invoke-ScriptAnalyzer -Path 'Proactive Remediation\Invoke-CustomInventoryAzureFunction.ps1'
 ```
 
-Runs PowerShell lint checks. Install with `Install-Module PSScriptAnalyzer -Scope CurrentUser` if needed.
+Runs PowerShell lint checks. On this workstation, PSScriptAnalyzer is available outside the sandboxed shell; if `Invoke-ScriptAnalyzer` is not discoverable in the current shell, run it from the external/unsandboxed PowerShell environment rather than skipping the check. Install with `Install-Module PSScriptAnalyzer -Scope CurrentUser` only if it is missing there too.
 
 ```powershell
 $errors=$null; $tokens=$null
