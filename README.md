@@ -2,16 +2,22 @@
 Repository for the Intune Custom Inventory solution by MSEndpointmgr.com
 
 > IMPORTANT! 
-> Version 1.2 requires use of version 3.6.0 of the Invoke-CustomInventoryAzureFunction.ps1 to be used in Proactive Remediations
+> Azure Function version 1.4 requires version 3.5.0 or later of the Invoke-CustomInventoryAzureFunction.ps1 proactive remediation script. Version 3.7.0 is the current recommended script version.
 > This version of the Azure Function will work for any custom log you want to send securely to Log Analytics
 
 ### Version History 
 Full changelog can be found here: [Changelog](https://github.com/cmacnichol/IntuneEnhancedInventory/blob/main/CHANGELOG.MD)
 #### Latest Version for the Azure Function 
-* 1.2 - Released 15.10.2022 
+* 1.4 - Updated 01.07.2026
 
 #### Latest Version history for the Proactive Remediation Script
 * 3.7.0 - Added Lenovo dock firmware normalization, optional monitor metadata, and Lenovo device health inventory
+
+#### Current Azure Function platform requirements
+* Azure Functions runtime: 4.x
+* PowerShell worker: PowerShell 7.x
+* Azure Functions extension bundle: `[4.0.0, 5.0.0)`
+* Proactive remediation script: minimum 3.5.0, recommended 3.7.0
 
 # Update ONLY
 * To perform an update use this deploy button and enter information from your current deployment-
@@ -30,7 +36,8 @@ Use the new and updated proactive remediation that sends data through a Azure Fu
 1. Deploy Azure Function using our template.  
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2Fcmacnichol%2FIntuneEnhancedInventory%2Fmain%2FDeploy%2FSecuredEnhancedInventory.json)
 3. Set API Permissions for MSI to graph with Add-MSIGraphPermissions.ps1 
-4. Deploy the Invoke-CustomInventoryAzureFunction.ps1 Proactive remediation after you added your Azure Function URL to the script. 
+4. Configure the Function App health check after deployment if your hosting plan supports it.
+5. Deploy the Invoke-CustomInventoryAzureFunction.ps1 Proactive remediation after you added your Azure Function URL to the script.
 Read the blogpost: 
 [https://msendpointmgr.com/2022/01/17/securing-intune-enhanced-inventory-with-azure-function/ ](https://msendpointmgr.com/2022/01/17/securing-intune-enhanced-inventory-with-azure-function/)
 
@@ -73,6 +80,40 @@ The Function also does not use an Azure RBAC role on the Log Analytics workspace
 7. The Function accepts the payload only when the device exists in the tenant and the device object is enabled.
 8. The Function reads the Log Analytics workspace ID and shared key from Key Vault-backed app settings.
 9. The Function signs the Log Analytics ingestion request with the shared key and sends each allowed log payload to the workspace.
+
+### Function health check
+
+Azure Function version 1.4 includes a lightweight health endpoint at:
+
+```text
+https://<function-app-name>.azurewebsites.net/api/health
+```
+
+The endpoint uses an anonymous `GET` trigger and performs a shallow runtime check. It verifies that required app settings are present (`TenantID`, `WorkspaceID`, and `SharedKey`) and that managed identity endpoint variables are available. It does not call Microsoft Graph or Log Analytics, so it is safe to run frequently.
+
+After deployment, configure health monitoring with one of these options:
+
+1. If the Function App runs on a Dedicated App Service plan or Elastic Premium plan, open the Function App in the Azure portal.
+2. Go to **Monitoring** > **Health check**.
+3. Enable health check.
+4. Set **Path** to `/api/health`.
+5. Save the configuration.
+6. Browse to `https://<function-app-name>.azurewebsites.net/api/health` and confirm the response status is `200 OK` with `"status": "healthy"`.
+
+For Consumption-hosted Function Apps where App Service Health check is not available, create an Application Insights availability test against the same `/api/health` URL. Alert on non-`200` responses or on response bodies where `"status"` is not `"healthy"`.
+
+Expected healthy response:
+
+```json
+{
+  "status": "healthy",
+  "requiredSettingsPresent": true,
+  "missingSettings": [],
+  "managedIdentityAvailable": true
+}
+```
+
+If the endpoint returns `503 Service Unavailable`, check the Function App app settings, Key Vault references for `WorkspaceID` and `SharedKey`, and whether the system-assigned managed identity is enabled.
 
 ### Example code for adding a custom log
 ```powershell 
